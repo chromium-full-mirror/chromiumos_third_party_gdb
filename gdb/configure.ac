@@ -2079,7 +2079,7 @@ dnl  At the moment, we just assume it's UTF-8.
 AC_DEFINE(GDB_DEFAULT_HOST_CHARSET, "UTF-8",
           [Define to be a string naming the default host character set.])
 
-AC_OUTPUT(Makefile .gdbinit:gdbinit.in gnulib/Makefile google/Makefile,
+AC_OUTPUT(Makefile .gdbinit:gdbinit.in gnulib/Makefile,
 [
 case x$CONFIG_HEADERS in
 xconfig.h:config.in)

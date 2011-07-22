@@ -869,10 +869,6 @@ TSOBS = inflow.o
 SUBDIRS = @subdirs@
 CLEANDIRS = $(SUBDIRS) gnulib
 
-# It's easier to handle local mods if they're isolated pure additions.
-SUBDIRS += google
-CLEANDIRS += google
-
 # For now, shortcut the "configure GDB for fewer languages" stuff.
 YYFILES = c-exp.c \
 	cp-name-parser.c \
@@ -1167,11 +1163,6 @@ all-lib: gnulib/Makefile
 	@$(MAKE) $(FLAGS_TO_PASS) DO=all DODIRS=gnulib subdir_do
 .PHONY: all-lib
 
-# Convenience rule to handle recursion.
-all-google: google/Makefile
-	@$(MAKE) $(FLAGS_TO_PASS) DO=all DODIRS=google subdir_do
-.PHONY: all-google
-
 # Create a library of the gdb object files and build GDB by linking
 # against that.
 #
@@ -1284,13 +1275,6 @@ Makefile: Makefile.in config.status @frags@
 gnulib/Makefile: gnulib/Makefile.in gnulib/Makefile.in config.status @frags@
 	CONFIG_FILES="gnulib/Makefile" \
 	  CONFIG_COMMANDS="depfiles" \
-	  CONFIG_HEADERS= \
-	  CONFIG_LINKS= \
-	  $(SHELL) config.status
-
-google/Makefile: google/Makefile.in config.status @frags@
-	CONFIG_FILES="google/Makefile" \
-	  CONFIG_COMMANDS= \
 	  CONFIG_HEADERS= \
 	  CONFIG_LINKS= \
 	  $(SHELL) config.status

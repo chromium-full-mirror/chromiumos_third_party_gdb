@@ -14770,7 +14770,7 @@ ac_config_links="$ac_config_links $ac_config_links_1"
 $as_echo "#define GDB_DEFAULT_HOST_CHARSET \"UTF-8\"" >>confdefs.h
 
 
-ac_config_files="$ac_config_files Makefile .gdbinit:gdbinit.in gnulib/Makefile google/Makefile"
+ac_config_files="$ac_config_files Makefile .gdbinit:gdbinit.in gnulib/Makefile"
 
 ac_config_commands="$ac_config_commands default"
 
@@ -15537,7 +15537,6 @@ do
     "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
     ".gdbinit") CONFIG_FILES="$CONFIG_FILES .gdbinit:gdbinit.in" ;;
     "gnulib/Makefile") CONFIG_FILES="$CONFIG_FILES gnulib/Makefile" ;;
-    "google/Makefile") CONFIG_FILES="$CONFIG_FILES google/Makefile" ;;
     "default") CONFIG_COMMANDS="$CONFIG_COMMANDS default" ;;
 
   *) as_fn_error "invalid argument: \`$ac_config_target'" "$LINENO" 5;;

@@ -1,6 +1,5 @@
 /* Darwin support for GDB, the GNU debugger.
-   Copyright 1997, 1998, 1999, 2000, 2001, 2002, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright 1997-2002, 2008-2012 Free Software Foundation, Inc.
 
    Contributed by Apple Computer, Inc.
 
@@ -51,7 +50,7 @@
 
 #define CHECK_ARGS(what, args) do { \
   if ((NULL == args) || ((args[0] != '0') && (args[1] != 'x'))) \
-    error("%s must be specified with 0x...", what);		\
+    error(_("%s must be specified with 0x..."), what);		\
 } while (0)
 
 #define PRINT_FIELD(structure, field) \
@@ -302,7 +301,7 @@ info_mach_ports_command (char *args, int from_tty)
 }
 
 
-void
+static void
 darwin_debug_port_info (task_t task, mach_port_t port)
 {
   kern_return_t kret;
@@ -544,7 +543,7 @@ darwin_debug_regions (task_t task, mach_vm_address_t address, int max)
 
       address = prev_address + prev_size;
 
-      /* Check to see if address space has wrapped around. */
+      /* Check to see if address space has wrapped around.  */
       if (address == 0)
         print = done = 1;
 
@@ -620,6 +619,7 @@ darwin_debug_regions_recurse (task_t task)
   kern_return_t kret;
   int ret;
   struct cleanup *table_chain;
+  struct ui_out *uiout = current_uiout;
 
   table_chain = make_cleanup_ui_out_table_begin_end (uiout, 9, -1, "regions");
 
@@ -817,7 +817,7 @@ info_mach_exceptions_command (char *args, int from_tty)
 	}
       else if (strcmp (args, "host") == 0)
 	{
-	  /* FIXME: This need a the privilegied host port!  */
+	  /* FIXME: This need a privilegied host port!  */
 	  kret = host_get_exception_ports
 	    (darwin_host_self, EXC_MASK_ALL, info.masks,
 	     &info.count, info.ports, info.behaviors, info.flavors);
@@ -842,6 +842,9 @@ info_mach_exceptions_command (char *args, int from_tty)
       disp_exception (&info);
     }
 }
+
+/* -Wmissing-prototypes */
+extern initialize_file_ftype _initialize_darwin_info_commands;
 
 void
 _initialize_darwin_info_commands (void)

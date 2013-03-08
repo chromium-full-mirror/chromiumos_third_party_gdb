@@ -1,7 +1,7 @@
 /* Target-dependent definitions for AMD64.
 
-   Copyright (C) 2001, 2003, 2004, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2001, 2003-2004, 2007-2012 Free Software Foundation,
+   Inc.
    Contributed by Jiri Smid, SuSE Labs.
 
    This file is part of GDB.
@@ -80,6 +80,8 @@ extern void amd64_displaced_step_fixup (struct gdbarch *gdbarch,
 					struct regcache *regs);
 
 extern void amd64_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch);
+extern void amd64_x32_init_abi (struct gdbarch_info info,
+				struct gdbarch *gdbarch);
 
 /* Fill register REGNUM in REGCACHE with the appropriate
    floating-point or SSE register value from *FXSAVE.  If REGNUM is
@@ -101,7 +103,7 @@ extern void amd64_supply_xsave (struct regcache *regcache, int regnum,
 extern void amd64_collect_fxsave (const struct regcache *regcache, int regnum,
 				  void *fxsave);
 
-/* Similar to amd64_collect_fxsave, but but use XSAVE extended state.  */
+/* Similar to amd64_collect_fxsave, but use XSAVE extended state.  */
 extern void amd64_collect_xsave (const struct regcache *regcache,
 				 int regnum, void *xsave, int gcore);
 

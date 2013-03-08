@@ -1,7 +1,7 @@
 /* Fortran language support definitions for GDB, the GNU debugger.
 
-   Copyright (C) 1992, 1993, 1994, 1995, 1998, 2000, 2005, 2007, 2008, 2009,
-   2010 Free Software Foundation, Inc.
+   Copyright (C) 1992-1995, 1998, 2000, 2005, 2007-2012 Free Software
+   Foundation, Inc.
 
    Contributed by Motorola.  Adapted from the C definitions by Farooq Butt
    (fmbutt@engage.sps.mot.com).
@@ -28,10 +28,10 @@ extern void f_error (char *);	/* Defined in f-exp.y */
 extern void f_print_type (struct type *, const char *, struct ui_file *, int,
 			  int);
 
-extern int f_val_print (struct type *, const gdb_byte *, int, CORE_ADDR,
-			struct ui_file *, int,
-			const struct value *,
-			const struct value_print_options *);
+extern void f_val_print (struct type *, const gdb_byte *, int, CORE_ADDR,
+			 struct ui_file *, int,
+			 const struct value *,
+			 const struct value_print_options *);
 
 /* Language-specific data structures */
 
@@ -75,7 +75,8 @@ extern SAVED_F77_COMMON_PTR head_common_list;	/* Ptr to 1st saved COMMON  */
 extern SAVED_F77_COMMON_PTR tail_common_list;	/* Ptr to last saved COMMON  */
 extern SAVED_F77_COMMON_PTR current_common;	/* Ptr to current COMMON */
 
-extern SAVED_F77_COMMON_PTR find_common_for_function (char *, char *);
+extern SAVED_F77_COMMON_PTR find_common_for_function (const char *,
+						      const char *);
 
 #define UNINITIALIZED_SECNUM -1
 #define COMMON_NEEDS_PATCHING(blk) ((blk)->secnum == UNINITIALIZED_SECNUM)
@@ -87,13 +88,13 @@ extern SAVED_F77_COMMON_PTR find_common_for_function (char *, char *);
 /* When reasonable array bounds cannot be fetched, such as when 
    you ask to 'mt print symbols' and there is no stack frame and 
    therefore no way of knowing the bounds of stack-based arrays, 
-   we have to assign default bounds, these are as good as any... */
+   we have to assign default bounds, these are as good as any...  */
 
 #define DEFAULT_UPPER_BOUND 999999
 #define DEFAULT_LOWER_BOUND -999999
 
-extern char *real_main_name;	/* Name of main function */
-extern int real_main_c_value;	/* C_value field of main function */
+extern char *real_main_name;	/* Name of main function.  */
+extern int real_main_c_value;	/* C_value field of main function.  */
 
 extern int f77_get_upperbound (struct type *);
 

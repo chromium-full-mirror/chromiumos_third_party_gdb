@@ -1,6 +1,6 @@
 /* Simulator tracing/debugging support.
-   Copyright (C) 1997, 1998, 2001, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1997-1998, 2001, 2007-2012 Free Software Foundation,
+   Inc.
    Contributed by Cygnus Support.
 
 This file is part of GDB, the GNU debugger.
@@ -77,7 +77,8 @@ enum {
   OPTION_TRACE_FUNCTION,
   OPTION_TRACE_DEBUG,
   OPTION_TRACE_FILE,
-  OPTION_TRACE_VPU
+  OPTION_TRACE_VPU,
+  OPTION_TRACE_SYSCALL
 };
 
 static const OPTION trace_options[] =
@@ -124,6 +125,9 @@ static const OPTION trace_options[] =
       trace_option_handler, NULL },
   { {"trace-events", optional_argument, NULL, OPTION_TRACE_EVENTS},
       '\0', "on|off", "Trace events",
+      trace_option_handler, NULL },
+  { {"trace-syscall", optional_argument, NULL, OPTION_TRACE_SYSCALL},
+      '\0', "on|off", "Trace system calls",
       trace_option_handler, NULL },
 #ifdef SIM_HAVE_ADDR_RANGE
   { {"trace-range", required_argument, NULL, OPTION_TRACE_RANGE},
@@ -214,7 +218,7 @@ set_trace_option_mask (SIM_DESC sd, const char *name, int mask, const char *arg)
 		}
 	    }
 	}
-    }  
+    }
 
   return SIM_RC_OK;
 }
@@ -329,6 +333,13 @@ trace_option_handler (SIM_DESC sd, sim_cpu *cpu, int opt,
 	return set_trace_option (sd, "-branch", TRACE_BRANCH_IDX, arg);
       else
 	sim_io_eprintf (sd, "Branch tracing not compiled in, `--trace-branch' ignored\n");
+      break;
+
+    case OPTION_TRACE_SYSCALL :
+      if (WITH_TRACE_SYSCALL_P)
+	return set_trace_option (sd, "-syscall", TRACE_SYSCALL_IDX, arg);
+      else
+	sim_io_eprintf (sd, "System call tracing not compiled in, `--trace-syscall' ignored\n");
       break;
 
     case OPTION_TRACE_SEMANTICS :
@@ -486,17 +497,6 @@ trace_uninstall (SIM_DESC sd)
     }
 }
 
-typedef enum {
-  trace_fmt_invalid,
-  trace_fmt_word,
-  trace_fmt_fp,
-  trace_fmt_fpu,
-  trace_fmt_string,
-  trace_fmt_bool,
-  trace_fmt_addr,
-  trace_fmt_instruction_incomplete,
-} data_fmt;
-
 /* compute the nr of trace data units consumed by data */
 static int
 save_data_size (TRACE_DATA *data,
@@ -508,7 +508,7 @@ save_data_size (TRACE_DATA *data,
 
 
 /* Archive DATA into the trace buffer */
-static void
+void
 save_data (SIM_DESC sd,
 	   TRACE_DATA *data,
 	   data_fmt fmt,
@@ -605,7 +605,7 @@ print_data (SIM_DESC sd,
       abort ();
     }
 }
-		  
+
 static const char *
 trace_idx_to_str (int trace_idx)
 {
@@ -621,6 +621,7 @@ trace_idx_to_str (int trace_idx)
     case TRACE_EVENTS_IDX:  return "events:  ";
     case TRACE_FPU_IDX:     return "fpu:     ";
     case TRACE_BRANCH_IDX:  return "branch:  ";
+    case TRACE_SYSCALL_IDX: return "syscall: ";
     case TRACE_VPU_IDX:     return "vpu:     ";
     default:
       sprintf (num, "?%d?", trace_idx);
@@ -1021,7 +1022,7 @@ trace_result_word1 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_word, sizeof (unsigned_word), &r0);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result0 (SIM_DESC sd,
@@ -1035,7 +1036,7 @@ trace_result0 (SIM_DESC sd,
   last_input = TRACE_INPUT_IDX (data);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_word2 (SIM_DESC sd,
@@ -1053,7 +1054,7 @@ trace_result_word2 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_word, sizeof (r1), &r1);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_word4 (SIM_DESC sd,
@@ -1075,7 +1076,7 @@ trace_result_word4 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_word, sizeof (r3), &r3);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_bool1 (SIM_DESC sd,
@@ -1091,7 +1092,7 @@ trace_result_bool1 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_bool, sizeof (r0), &r0);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_addr1 (SIM_DESC sd,
@@ -1107,7 +1108,7 @@ trace_result_addr1 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_addr, sizeof (r0), &r0);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_fp1 (SIM_DESC sd,
@@ -1123,7 +1124,7 @@ trace_result_fp1 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_fp, sizeof (fp_word), &f0);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_fp2 (SIM_DESC sd,
@@ -1141,7 +1142,7 @@ trace_result_fp2 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_fp, sizeof (f1), &f1);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_fpu1 (SIM_DESC sd,
@@ -1159,7 +1160,7 @@ trace_result_fpu1 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_fp, sizeof (double), &d);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_string1 (SIM_DESC sd,
@@ -1175,7 +1176,7 @@ trace_result_string1 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_string, strlen (s0) + 1, s0);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_result_word1_string1 (SIM_DESC sd,
@@ -1193,7 +1194,7 @@ trace_result_word1_string1 (SIM_DESC sd,
   save_data (sd, data, trace_fmt_string, strlen (s0) + 1, s0);
 
   trace_results (sd, cpu, trace_idx, last_input);
-}	      
+}
 
 void
 trace_vprintf (SIM_DESC sd, sim_cpu *cpu, const char *fmt, va_list ap)

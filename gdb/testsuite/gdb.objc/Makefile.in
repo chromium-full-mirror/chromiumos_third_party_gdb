@@ -16,7 +16,8 @@ check:
 
 clean mostlyclean:
 	-rm -f *~ *.o *.ci
+	-rm -f *.dwo *.dwp
 	-rm -f core ${EXECUTABLES}
 
 distclean maintainer-clean realclean: clean
-	-rm -f Makefile config.status config.log
+	-rm -f Makefile config.status config.log gdb.log gdb.sum

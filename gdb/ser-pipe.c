@@ -1,6 +1,5 @@
 /* Serial interface for a pipe to a separate program
-   Copyright (C) 1999, 2000, 2001, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1999-2001, 2007-2012 Free Software Foundation, Inc.
 
    Contributed by Cygnus Solutions.
 
@@ -44,7 +43,7 @@ struct pipe_state
     int pid;
   };
 
-/* Open up a raw pipe */
+/* Open up a raw pipe.  */
 
 static int
 pipe_open (struct serial *scb, const char *name)
@@ -79,7 +78,7 @@ pipe_open (struct serial *scb, const char *name)
      on certain platforms.  */
   pid = vfork ();
   
-  /* Error. */
+  /* Error.  */
   if (pid == -1)
     {
       close (pdes[0]);
@@ -96,7 +95,7 @@ pipe_open (struct serial *scb, const char *name)
       err_pdes[0] = err_pdes[1] = -1;
     }
 
-  /* Child. */
+  /* Child.  */
   if (pid == 0)
     {
       /* We don't want ^c to kill the connection.  */
@@ -108,7 +107,7 @@ pipe_open (struct serial *scb, const char *name)
       signal (SIGINT, SIG_IGN);
 #endif
 
-      /* re-wire pdes[1] to stdin/stdout */
+      /* Re-wire pdes[1] to stdin/stdout.  */
       close (pdes[0]);
       if (pdes[1] != STDOUT_FILENO)
 	{
@@ -124,18 +123,18 @@ pipe_open (struct serial *scb, const char *name)
 	  close (err_pdes[1]);
 	}
 #if 0
-      /* close any stray FD's - FIXME - how? */
+      /* close any stray FD's - FIXME - how?  */
       /* POSIX.2 B.3.2.2 "popen() shall ensure that any streams
          from previous popen() calls that remain open in the 
-         parent process are closed in the new child process. */
+         parent process are closed in the new child process.  */
       for (old = pidlist; old; old = old->next)
-	close (fileno (old->fp));	/* don't allow a flush */
+	close (fileno (old->fp));	/* Don't allow a flush.  */
 #endif
       execl ("/bin/sh", "sh", "-c", name, (char *) 0);
       _exit (127);
     }
 
-  /* Parent. */
+  /* Parent.  */
   close (pdes[1]);
   if (err_pdes[1] != -1)
     close (err_pdes[1]);
@@ -157,21 +156,59 @@ pipe_close (struct serial *scb)
 {
   struct pipe_state *state = scb->state;
 
+  close (scb->fd);
+  scb->fd = -1;
+
   if (state != NULL)
     {
-      int pid = state->pid;
-      close (scb->fd);
-      scb->fd = -1;
+      int wait_result, status;
+
+      /* Don't kill the task right away, give it a chance to shut down cleanly.
+	 But don't wait forever though.  */
+#define PIPE_CLOSE_TIMEOUT 5
+
+      /* Assume the program will exit after SIGTERM.  Might be
+	 useful to print any remaining stderr output from
+	 scb->error_fd while waiting.  */
+#define SIGTERM_TIMEOUT INT_MAX
+
+      wait_result = -1;
+#ifdef HAVE_WAITPID
+      wait_result = wait_to_die_with_timeout (state->pid, &status,
+					      PIPE_CLOSE_TIMEOUT);
+#endif
+      if (wait_result == -1)
+	{
+	  kill (state->pid, SIGTERM);
+#ifdef HAVE_WAITPID
+	  wait_to_die_with_timeout (state->pid, &status, SIGTERM_TIMEOUT);
+#endif
+	}
+
       if (scb->error_fd != -1)
 	close (scb->error_fd);
       scb->error_fd = -1;
       xfree (state);
       scb->state = NULL;
-      kill (pid, SIGTERM);
-      /* Might be useful to check that the child does die,
-	 and while we're waiting for it to die print any remaining
-	 stderr output.  */
     }
+}
+
+int
+gdb_pipe (int pdes[2])
+{
+#if !HAVE_SOCKETPAIR
+  errno = ENOSYS;
+  return -1;
+#else
+
+  if (socketpair (AF_UNIX, SOCK_STREAM, 0, pdes) < 0)
+    return -1;
+
+  /* If we don't do this, GDB simply exits when the remote side
+     dies.  */
+  signal (SIGPIPE, SIG_IGN);
+  return 0;
+#endif
 }
 
 void
@@ -191,6 +228,7 @@ _initialize_ser_pipe (void)
   ops->send_break = ser_base_send_break;
   ops->go_raw = ser_base_raw;
   ops->get_tty_state = ser_base_get_tty_state;
+  ops->copy_tty_state = ser_base_copy_tty_state;
   ops->set_tty_state = ser_base_set_tty_state;
   ops->print_tty_state = ser_base_print_tty_state;
   ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;

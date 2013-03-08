@@ -1,6 +1,5 @@
 /* Native-dependent code for GNU/Linux SPARC.
-   Copyright (C) 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2005-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -48,12 +47,13 @@ fill_gregset (const struct regcache *regcache, prgregset_t *gregs, int regnum)
 }
 
 void
-fill_fpregset (const struct regcache *regcache, prfpregset_t *fpregs, int regnum)
+fill_fpregset (const struct regcache *regcache,
+	       prfpregset_t *fpregs, int regnum)
 {
   sparc32_collect_fpregset (regcache, regnum, fpregs);
 }
 
-void _initialialize_sparc_linux_nat (void);
+void _initialize_sparc_linux_nat (void);
 
 void
 _initialize_sparc_linux_nat (void)

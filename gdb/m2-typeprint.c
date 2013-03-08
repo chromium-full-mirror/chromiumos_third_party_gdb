@@ -1,7 +1,6 @@
 /* Support for printing Modula 2 types for GDB, the GNU debugger.
-   Copyright (C) 1986, 1988, 1989, 1991, 1992, 1995, 2000, 2001, 2002, 2003,
-                 2004, 2005, 2006, 2007, 2008, 2009, 2010
-                 Free Software Foundation, Inc.
+   Copyright (C) 1986, 1988-1989, 1991-1992, 1995, 2000-2012 Free
+   Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -67,7 +66,8 @@ int m2_is_unbounded_array (struct type *type);
 
 
 void
-m2_print_type (struct type *type, const char *varstring, struct ui_file *stream,
+m2_print_type (struct type *type, const char *varstring,
+	       struct ui_file *stream,
 	       int show, int level)
 {
   enum type_code code;
@@ -133,7 +133,7 @@ m2_print_type (struct type *type, const char *varstring, struct ui_file *stream,
       break;
 
     case TYPE_CODE_UNDEF:
-      /* i18n: Do not translate the "struct" part! */
+      /* i18n: Do not translate the "struct" part!  */
       m2_unknown (_("undef"), type, stream, show, level);
       break;
 
@@ -328,8 +328,8 @@ m2_short_set (struct type *type, struct ui_file *stream, int show, int level)
 int
 m2_is_long_set (struct type *type)
 {
-  LONGEST previous_high = 0;  /* unnecessary initialization
-				 keeps gcc -Wall happy */
+  LONGEST previous_high = 0;  /* Unnecessary initialization
+				 keeps gcc -Wall happy.  */
   int len, i;
   struct type *range;
 
@@ -467,7 +467,7 @@ m2_long_set (struct type *type, struct ui_file *stream, int show, int level)
 	    }
 	}
       else
-	/* i18n: Do not translate the "SET OF" part! */
+	/* i18n: Do not translate the "SET OF" part!  */
 	fprintf_filtered(stream, _("SET OF <unknown>"));
 
       return 1;
@@ -554,7 +554,7 @@ m2_record_fields (struct type *type, struct ui_file *stream, int show,
       if (TYPE_CODE (type) == TYPE_CODE_STRUCT)
 	fprintf_filtered (stream, "RECORD\n");
       else if (TYPE_CODE (type) == TYPE_CODE_UNION)
-	/* i18n: Do not translate "CASE" and "OF" */
+	/* i18n: Do not translate "CASE" and "OF".  */
 	fprintf_filtered (stream, _("CASE <variant> OF\n"));
 
       for (i = TYPE_N_BASECLASSES (type); i < len; i++)
@@ -607,10 +607,11 @@ m2_enum (struct type *type, struct ui_file *stream, int show, int level)
 	    fprintf_filtered (stream, ", ");
 	  wrap_here ("    ");
 	  fputs_filtered (TYPE_FIELD_NAME (type, i), stream);
-	  if (lastval != TYPE_FIELD_BITPOS (type, i))
+	  if (lastval != TYPE_FIELD_ENUMVAL (type, i))
 	    {
-	      fprintf_filtered (stream, " = %d", TYPE_FIELD_BITPOS (type, i));
-	      lastval = TYPE_FIELD_BITPOS (type, i);
+	      fprintf_filtered (stream, " = %s",
+				plongest (TYPE_FIELD_ENUMVAL (type, i)));
+	      lastval = TYPE_FIELD_ENUMVAL (type, i);
 	    }
 	  lastval++;
 	}

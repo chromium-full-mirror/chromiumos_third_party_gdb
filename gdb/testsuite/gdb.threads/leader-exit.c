@@ -1,6 +1,6 @@
 /* Clean exit of the thread group leader should not break GDB.
 
-   Copyright 2007, 2011 Free Software Foundation, Inc.
+   Copyright 2007, 2011-2012 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ start (void *arg)
   i = pthread_join (main_thread, NULL);
   assert (i == 0);
 
-  return arg;  /* break-here */
+  return arg;	/* break-here */
 }
 
 int

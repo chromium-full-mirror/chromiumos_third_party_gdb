@@ -1,7 +1,6 @@
 /* OS ABI variant handling for GDB.
 
-   Copyright (C) 2001, 2002, 2003, 2004, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2001-2004, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -73,6 +72,7 @@ static const char * const gdb_osabi_names[] =
   "DICOS",
   "Darwin",
   "Symbian",
+  "OpenVMS",
 
   "<invalid>"
 };
@@ -184,7 +184,7 @@ gdbarch_register_osabi (enum bfd_architecture arch, unsigned long machine,
 }
 
 
-/* Sniffer to find the OS ABI for a given file's architecture and flavour. 
+/* Sniffer to find the OS ABI for a given file's architecture and flavour.
    It is legal to have multiple sniffers for each arch/flavour pair, to
    disambiguate one OS's a.out from another, for example.  The first sniffer
    to return something other than GDB_OSABI_UNKNOWN wins, so a sniffer should
@@ -458,8 +458,9 @@ generic_elf_osabi_sniff_abi_tag_sections (bfd *abfd, asection *sect, void *obj)
 	      break;
 
 	    default:
-	      internal_error (__FILE__, __LINE__, _("\
-generic_elf_osabi_sniff_abi_tag_sections: unknown OS number %d"),
+	      internal_error (__FILE__, __LINE__,
+			      _("generic_elf_osabi_sniff_abi_tag_sections: "
+				"unknown OS number %d"),
 			      abi_tag);
 	    }
 	  return;
@@ -513,11 +514,15 @@ generic_elf_osabi_sniffer (bfd *abfd)
   switch (elfosabi)
     {
     case ELFOSABI_NONE:
+    case ELFOSABI_GNU:
       /* When the EI_OSABI field in the ELF header is ELFOSABI_NONE
          (0), then the ELF structures in the file are conforming to
          the base specification for that machine (there are no
          OS-specific extensions).  In order to determine the real OS
-         in use we must look for OS-specific notes.  */
+         in use, we must look for OS-specific notes.
+
+         The same applies for ELFOSABI_GNU: this can mean GNU/Hurd,
+         GNU/Linux, and possibly more.  */
       bfd_map_over_sections (abfd,
 			     generic_elf_osabi_sniff_abi_tag_sections,
 			     &osabi);
@@ -529,14 +534,6 @@ generic_elf_osabi_sniffer (bfd *abfd)
 
     case ELFOSABI_NETBSD:
       osabi = GDB_OSABI_NETBSD_ELF;
-      break;
-
-    case ELFOSABI_LINUX:
-      osabi = GDB_OSABI_LINUX;
-      break;
-
-    case ELFOSABI_HURD:
-      osabi = GDB_OSABI_HURD;
       break;
 
     case ELFOSABI_SOLARIS:
@@ -552,6 +549,10 @@ generic_elf_osabi_sniffer (bfd *abfd)
       bfd_map_over_sections (abfd,
 			     generic_elf_osabi_sniff_abi_tag_sections,
 			     &osabi);
+      break;
+
+    case ELFOSABI_OPENVMS:
+      osabi = GDB_OSABI_OPENVMS;
       break;
     }
 
@@ -615,7 +616,8 @@ show_osabi (struct ui_file *file, int from_tty, struct cmd_list_element *c,
 {
   if (user_osabi_state == osabi_auto)
     fprintf_filtered (file,
-		      _("The current OS ABI is \"auto\" (currently \"%s\").\n"),
+		      _("The current OS ABI is \"auto\" "
+			"(currently \"%s\").\n"),
 		      gdbarch_osabi_name (gdbarch_osabi (get_current_arch ())));
   else
     fprintf_filtered (file, _("The current OS ABI is \"%s\".\n"),
@@ -643,11 +645,10 @@ _initialize_gdb_osabi (void)
 
   /* Register the "set osabi" command.  */
   add_setshow_enum_cmd ("osabi", class_support, gdb_osabi_available_names,
-			&set_osabi_string, _("\
-Set OS ABI of target."), _("\
-Show OS ABI of target."), NULL,
-			set_osabi,
-			show_osabi,
+			&set_osabi_string,
+			_("Set OS ABI of target."),
+			_("Show OS ABI of target."),
+			NULL, set_osabi, show_osabi,
 			&setlist, &showlist);
   user_osabi_state = osabi_auto;
 }

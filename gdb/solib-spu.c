@@ -1,5 +1,5 @@
 /* Cell SPU GNU/Linux support -- shared library handling.
-   Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2012 Free Software Foundation, Inc.
 
    Contributed by Ulrich Weigand <uweigand@de.ibm.com>.
 
@@ -19,6 +19,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
+#include "solib-spu.h"
 #include "gdbcore.h"
 #include "gdb_string.h"
 #include "gdb_assert.h"
@@ -85,13 +86,13 @@ spu_skip_standalone_loader (void)
 	 this will step past the first instruction of the stand-alone SPE
 	 executable loader, but we don't care about that.  */
 
-      inferior_thread ()->in_infcall = 1;   /* Suppress MI messages.  */
+      inferior_thread ()->control.in_infcall = 1; /* Suppress MI messages.  */
 
-      target_resume (inferior_ptid, 1, TARGET_SIGNAL_0);
+      target_resume (inferior_ptid, 1, GDB_SIGNAL_0);
       target_wait (minus_one_ptid, &ws, 0);
       set_executing (minus_one_ptid, 0);
 
-      inferior_thread ()->in_infcall = 0;
+      inferior_thread ()->control.in_infcall = 0;
     }
 }
 
@@ -227,7 +228,7 @@ spu_current_sos (void)
       link_ptr = &new->next;
     }
 
-  /* Append OpenCL sos. */
+  /* Append OpenCL sos.  */
   append_ocl_sos (link_ptr);
 
   return head;
@@ -540,6 +541,9 @@ spu_solib_loaded (struct so_list *so)
       ocl_enable_break (so->objfile);
     }
 }
+
+/* -Wmissing-prototypes */
+extern initialize_file_ftype _initialize_spu_solib;
 
 void
 _initialize_spu_solib (void)

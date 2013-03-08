@@ -1,4 +1,4 @@
-# Copyright (C) 2010 Free Software Foundation, Inc.
+# Copyright (C) 2010-2012 Free Software Foundation, Inc.
 
 # Makefile for building a staged copy of the data-directory.
 # This file is part of GDB.
@@ -41,29 +41,60 @@ INSTALL_DIR = $(SHELL) $(srcdir)/../../mkinstalldirs
 GDB_DATADIR = @GDB_DATADIR@
 
 SYSCALLS_DIR = syscalls
-SYSCALLS_INSTALL_DIR = $(DESTDIR)/$(GDB_DATADIR)/$(SYSCALLS_DIR)
+SYSCALLS_INSTALL_DIR = $(DESTDIR)$(GDB_DATADIR)/$(SYSCALLS_DIR)
 SYSCALLS_FILES = \
 	gdb-syscalls.dtd \
 	ppc-linux.xml ppc64-linux.xml \
 	i386-linux.xml amd64-linux.xml \
-	sparc-linux.xml sparc64-linux.xml
+	sparc-linux.xml sparc64-linux.xml \
+	mips-o32-linux.xml mips-n32-linux.xml mips-n64-linux.xml
 
 PYTHON_DIR = python
-PYTHON_INSTALL_DIR = $(DESTDIR)/$(GDB_DATADIR)/$(PYTHON_DIR)
+PYTHON_INSTALL_DIR = $(DESTDIR)$(GDB_DATADIR)/$(PYTHON_DIR)
 PYTHON_FILES = \
 	gdb/__init__.py \
 	gdb/types.py \
 	gdb/printing.py \
+	gdb/prompt.py \
 	gdb/command/__init__.py \
 	gdb/command/pretty_printers.py \
-	libstdcxx/__init__.py \
-	libstdcxx/v6/__init__.py \
-	libstdcxx/v6/printers.py
+	gdb/command/prompt.py \
+	gdb/command/explore.py
 
-SYSTEM_GDBINIT_IN = system.gdbinit.in
+FLAGS_TO_PASS = \
+	"prefix=$(prefix)" \
+	"exec_prefix=$(exec_prefix)" \
+	"infodir=$(infodir)" \
+	"datarootdir=$(datarootdir)" \
+	"docdir=$(docdir)" \
+	"htmldir=$(htmldir)" \
+	"pdfdir=$(pdfdir)" \
+	"libdir=$(libdir)" \
+	"mandir=$(mandir)" \
+	"datadir=$(datadir)" \
+	"includedir=$(includedir)" \
+	"against=$(against)" \
+	"DESTDIR=$(DESTDIR)" \
+	"AR=$(AR)" \
+	"AR_FLAGS=$(AR_FLAGS)" \
+	"CC=$(CC)" \
+	"CFLAGS=$(CFLAGS)" \
+	"CXX=$(CXX)" \
+	"CXXFLAGS=$(CXXFLAGS)" \
+	"DLLTOOL=$(DLLTOOL)" \
+	"LDFLAGS=$(LDFLAGS)" \
+	"RANLIB=$(RANLIB)" \
+	"MAKEINFO=$(MAKEINFO)" \
+	"MAKEHTML=$(MAKEHTML)" \
+	"MAKEHTMLFLAGS=$(MAKEHTMLFLAGS)" \
+	"INSTALL=$(INSTALL)" \
+	"INSTALL_PROGRAM=$(INSTALL_PROGRAM)" \
+	"INSTALL_DATA=$(INSTALL_DATA)" \
+	"RUNTEST=$(RUNTEST)" \
+	"RUNTESTFLAGS=$(RUNTESTFLAGS)"
 
 .PHONY: all
-all: stamp-syscalls stamp-python stamp-gdbinit
+all: stamp-syscalls stamp-python
 
 # For portability's sake, we need to handle systems that don't have
 # symbolic links.
@@ -82,6 +113,7 @@ stamp-syscalls: Makefile $(SYSCALLS_FILES)
 .PHONY: clean-syscalls
 clean-syscalls:
 	rm -rf $(SYSCALLS_DIR)
+	rm -f stamp-syscalls
 
 # This target is responsible for properly installing the syscalls'
 # XML files in the system.
@@ -122,6 +154,7 @@ stamp-python: Makefile $(PYTHON_FILES)
 .PHONY: clean-python
 clean-python:
 	rm -rf $(PYTHON_DIR)
+	rm -f stamp-python
 
 .PHONY: install-python
 install-python:
@@ -145,24 +178,6 @@ uninstall-python:
 	  done \
 	done
 
-stamp-gdbinit: Makefile $(SYSTEM_GDBINIT_IN)
-	$(INSTALL_DATA) $(srcdir)/$(SYSTEM_GDBINIT_IN) ./system.gdbinit
-	touch $@
-
-.PHONY: clean-gdbinit
-clean-gdbinit:
-	rm -f $(SYSTEM_GDBINIT_IN)
-
-.PHONY: install-gdbinit
-install-gdbinit:
-	$(INSTALL_DIR) $(DESTDIR)/$(GDB_DATADIR)
-	$(INSTALL_DATA) ./system.gdbinit $(DESTDIR)/$(GDB_DATADIR)
-
-.PHONY: uninstall-gdbinit
-uninstall-gdbinit:
-	rm -f $(DESTDIR)/$(GDB_DATADIR)/system.gdbinit
-	rmdir 2>/dev/null $(DESTDIR)/$(GDB_DATADIR)
-
 # Traditionally "install" depends on "all".  But it may be useful
 # not to; for example, if the user has made some trivial change to a
 # source file and doesn't care about rebuilding or just wants to save the
@@ -170,17 +185,16 @@ uninstall-gdbinit:
 # install-only is intended to address that need.
 .PHONY: install
 install: all
-	$(MAKE) install-only
+	@$(MAKE) $(FLAGS_TO_PASS) install-only
 
 .PHONY: install-only
-install-only: install-syscalls install-python install-gdbinit
+install-only: install-syscalls install-python
 
 .PHONY: uninstall
-uninstall: uninstall-syscalls uninstall-python uninstall-gdbinit
+uninstall: uninstall-syscalls uninstall-python
 
 .PHONY: clean
-clean: clean-syscalls clean-python clean-gdbinit
-	rm -f stamp-*
+clean: clean-syscalls clean-python
 
 .PHONY: maintainer-clean realclean distclean
 maintainer-clean realclean distclean: clean

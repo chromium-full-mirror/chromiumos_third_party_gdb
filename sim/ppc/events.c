@@ -26,6 +26,7 @@
 #include "events.h"
 
 #include <signal.h>
+#include <stdlib.h>
 
 #if !defined (SIM_EVENTS_POLL_RATE)
 #define SIM_EVENTS_POLL_RATE 0x1000
@@ -114,7 +115,7 @@ event_queue_init(event_queue *queue)
     while (event != NULL) {
       event_entry *dead = event;
       event = event->next;
-      zfree(dead);
+      free(dead);
     }
     queue->held = NULL;
     queue->held_end = &queue->held;
@@ -128,7 +129,7 @@ event_queue_init(event_queue *queue)
   while (event != NULL) {
     event_entry *dead = event;
     event = event->next;
-    zfree(dead);
+    free(dead);
   }
   queue->queue = NULL;
     
@@ -304,7 +305,7 @@ event_queue_deschedule(event_queue *events,
 			   (long)current->time_of_event,
 			   (long)current->handler,
 			   (long)current->data));
-      zfree(current);
+      free(current);
       update_time_from_event(events);
     }
     else {
@@ -392,7 +393,7 @@ event_queue_process(event_queue *events)
 			 (long)to_do->time_of_event,
 			 (long)handler,
 			 (long)data));
-    zfree(to_do);
+    free(to_do);
     /* Always re-compute the time to the next event so that HANDLER()
        can safely insert new events into the queue. */
     update_time_from_event(events);

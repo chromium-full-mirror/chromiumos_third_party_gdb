@@ -1,6 +1,6 @@
 /* gdb-if.c -- sim interface to GDB.
 
-Copyright (C) 2008, 2009, 2010 Free Software Foundation, Inc.
+Copyright (C) 2008-2012 Free Software Foundation, Inc.
 Contributed by Red Hat, Inc.
 
 This file is part of the GNU simulators.
@@ -18,6 +18,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
+#include "config.h"
 #include <stdio.h>
 #include <assert.h>
 #include <signal.h>
@@ -200,7 +201,7 @@ sim_load (SIM_DESC sd, char *prog, struct bfd *abfd, int from_tty)
   if (!abfd)
     return SIM_RC_FAIL;
 
-  rx_load (abfd);
+  rx_load (abfd, get_callbacks ());
   build_swap_list (abfd);
 
   return SIM_RC_OK;
@@ -213,7 +214,7 @@ sim_create_inferior (SIM_DESC sd, struct bfd *abfd, char **argv, char **env)
 
   if (abfd)
     {
-      rx_load (abfd);
+      rx_load (abfd, NULL);
       build_swap_list (abfd);
     }
 
@@ -533,12 +534,12 @@ sim_store_register (SIM_DESC sd, int regno, unsigned char *buf, int length)
   check_desc (sd);
 
   if (!check_regno (regno))
-    return 0;
+    return -1;
 
   size = reg_size (regno);
 
   if (length != size)
-    return 0;
+    return -1;
 
   if (rx_big_endian)
     val = get_be (buf, length);
@@ -622,10 +623,14 @@ sim_store_register (SIM_DESC sd, int regno, unsigned char *buf, int length)
     case sim_rx_fpsw_regnum:
       put_reg (fpsw, val);
       break;
+    case sim_rx_acc_regnum:
+      put_reg (acclo, val & 0xffffffff);
+      put_reg (acchi, (val >> 32) & 0xffffffff);
+      break;
     default:
       fprintf (stderr, "rx minisim: unrecognized register number: %d\n",
 	       regno);
-      return -1;
+      return 0;
     }
 
   return size;
@@ -705,12 +710,12 @@ handle_step (int rc)
   if (execution_error_get_last_error () != SIM_ERR_NONE)
     {
       reason = sim_stopped;
-      siggnal = TARGET_SIGNAL_SEGV;
+      siggnal = GDB_SIGNAL_SEGV;
     }
   if (RX_STEPPED (rc) || RX_HIT_BREAK (rc))
     {
       reason = sim_stopped;
-      siggnal = TARGET_SIGNAL_TRAP;
+      siggnal = GDB_SIGNAL_TRAP;
     }
   else if (RX_STOPPED (rc))
     {
@@ -729,6 +734,8 @@ handle_step (int rc)
 void
 sim_resume (SIM_DESC sd, int step, int sig_to_deliver)
 {
+  int rc;
+
   check_desc (sd);
 
   if (sig_to_deliver != 0)
@@ -741,7 +748,12 @@ sim_resume (SIM_DESC sd, int step, int sig_to_deliver)
   execution_error_clear_last_error ();
 
   if (step)
-    handle_step (decode_opcode ());
+    {
+      rc = setjmp (decode_jmp_buf);
+      if (rc == 0)
+	rc = decode_opcode ();
+      handle_step (rc);
+    }
   else
     {
       /* We don't clear 'stop' here, because then we would miss
@@ -754,16 +766,18 @@ sim_resume (SIM_DESC sd, int step, int sig_to_deliver)
 	    {
 	      stop = 0;
 	      reason = sim_stopped;
-	      siggnal = TARGET_SIGNAL_INT;
+	      siggnal = GDB_SIGNAL_INT;
 	      break;
 	    }
 
-	  int rc = decode_opcode ();
+	  rc = setjmp (decode_jmp_buf);
+	  if (rc == 0)
+	    rc = decode_opcode ();
 
 	  if (execution_error_get_last_error () != SIM_ERR_NONE)
 	    {
 	      reason = sim_stopped;
-	      siggnal = TARGET_SIGNAL_SEGV;
+	      siggnal = GDB_SIGNAL_SEGV;
 	      break;
 	    }
 
@@ -847,4 +861,10 @@ sim_do_command (SIM_DESC sd, char *cmd)
   else
     printf ("The 'sim' command expects either 'trace' or 'verbose'"
 	    " as a subcommand.\n");
+}
+
+char **
+sim_complete_command (SIM_DESC sd, char *text, char *word)
+{
+  return NULL;
 }

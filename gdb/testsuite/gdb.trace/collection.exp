@@ -1,4 +1,4 @@
-# Copyright 1998, 2005, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+# Copyright 1998, 2005, 2007-2012 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,19 +15,11 @@
 
 load_lib "trace-support.exp"
 
-if $tracelevel then {
-	strace $tracelevel
-}
 
-
-set testfile "collection"
-set srcfile ${testfile}.c
+standard_testfile
 set executable $testfile
-set binfile $objdir/$subdir/$executable
 
-if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
-	executable {debug nowarnings}] != "" } {
-    untested collection.exp
+if {[prepare_for_testing $testfile.exp $testfile $srcfile {debug nowarnings}]} {
     return -1
 }
 
@@ -44,11 +36,11 @@ if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
 set ws "\[\r\n\t \]+"
 set cr "\[\r\n\]+"
 
-if [istarget "x86_64-*"] then {
+if [is_amd64_regs_target] {
     set fpreg "rbp"
     set spreg "rsp"
     set pcreg "rip"
-} elseif [istarget "i?86-*"] then {
+} elseif [is_x86_like_target] {
     set fpreg "ebp"
     set spreg "esp"
     set pcreg "eip"
@@ -456,13 +448,30 @@ proc gdb_collect_globals_test { } {
 	}
     }
 
+    # Use use this to test collecting overlapping memory ranges
+    # (making use of UNOP_MEMVAL, as objects don't usually overlap
+    # other objects).  Note that globalarr2 should not be collected in
+    # any other way so that a regression test below can be effective.
+
+    set globalarr2_addr ""
+    set test "get address of globalarr2"
+    gdb_test_multiple "p /x &globalarr2" $test {
+	-re " = (0x\[0-9a-f\]+)\r\n$gdb_prompt $" {
+	    set globalarr2_addr $expect_out(1,string)
+	    pass $test
+	}
+    }
+
     gdb_test "trace $testline" \
 	    "Tracepoint \[0-9\]+ at .*" \
 	    "collect globals: set tracepoint"
     gdb_trace_setactions "collect globals: define actions" \
 	    "" \
 	    "collect globalc, globali, globalf, globald" "^$" \
-	    "collect globalstruct, globalp, globalarr" "^$"
+	    "collect globalstruct, globalp, globalarr" "^$" \
+	    "collect \{int \[4\]\}$globalarr2_addr" "^$" \
+	    "collect \{int \[2\]\}$globalarr2_addr" "^$" \
+	    "collect \{int \[4\]\}globalarr3" "^$"
 
     # Begin the test.
     run_trace_experiment "globals" globals_test_func
@@ -507,9 +516,142 @@ proc gdb_collect_globals_test { } {
 	    "\\$\[0-9\]+ = 3$cr" \
 	    "collect globals: collected global array element #3"
 
+    # Check that we didn't mess up sort&merging memory ranges to
+    # collect.
+    gdb_test "print globalarr2" \
+	"\\$\[0-9\]+ = \\{0, 1, 2, 3\\}$cr" \
+	"collect globals: collected global array 2"
+
+    # GDB would internal error collecting UNOP_MEMVAL's whose address
+    # expression wasn't an rvalue (that's regtested in the
+    # corresponding 'collect' action above).  This just double checks
+    # we actually did collect what we wanted.
+    gdb_test "print globalarr3" \
+	"\\$\[0-9\]+ = \\{3, 2, 1, 0\\}$cr" \
+	"collect globals: collected global array 3"
+
     gdb_test "tfind none" \
 	    "#0  end .*" \
 	    "collect globals: cease trace debugging"
+}
+
+# Test that when we've collected all fields of a structure
+# individually, we can print the whole structure in one go.
+proc gdb_collect_global_in_pieces_test { } {
+    global gdb_prompt
+
+    prepare_for_trace_test
+
+    # Find the comment-identified line for setting this tracepoint.
+    set testline 0
+    set msg "collect global in pieces: find tracepoint line"
+    gdb_test_multiple "list globals_test_func, +30" "$msg" {
+	-re "\[\r\n\](\[0-9\]+)\[^\r\n\]+ Set_Tracepoint_Here .*$gdb_prompt" {
+	    set testline $expect_out(1,string)
+	    pass "$msg"
+	}
+    }
+
+    if {$testline == 0} {
+	return
+    }
+
+    gdb_test "trace $testline" \
+	"Tracepoint \[0-9\]+ at .*" \
+	"collect global in pieces: set tracepoint"
+    gdb_trace_setactions "collect global in pieces: define actions" \
+	    "" \
+	    "collect global_pieces.a, global_pieces.b" \
+	    "^$"
+
+    # Begin the test.
+    run_trace_experiment "global in pieces" globals_test_func
+
+    gdb_test "print /x global_pieces.a" " = 0x12345678" \
+	"collect global in pieces: print piece a"
+    gdb_test "print /x global_pieces.b" " = 0x87654321" \
+	"collect global in pieces: print piece b"
+
+    gdb_test "print /x global_pieces" " = \{a = 0x12345678, b = 0x87654321\}" \
+	"collect global in pieces: print whole object"
+
+    gdb_test "tfind none" "#0  end .*" \
+	"collect global in pieces: cease trace debugging"
+}
+
+proc gdb_collect_return_test { } {
+    global gdb_prompt
+
+    prepare_for_trace_test
+
+    # We'll simply re-use the args_test_function for this test
+    gdb_test "trace args_test_func" \
+	    "Tracepoint \[0-9\]+ at .*" \
+	    "collect \$_ret: set tracepoint"
+    gdb_trace_setactions "collect \$_ret: define actions" \
+	    "" \
+	    "collect \$_ret" "^$"
+
+    # Begin the test.
+    run_trace_experiment \$_ret args_test_func
+
+    # Since we can't guarantee that $_ret will give us the caller,
+    # pass either way, but giving different messages.
+    gdb_test_multiple "backtrace" "" {
+	-re ".*#1 .* in main .*\r\n$gdb_prompt $" {
+	    pass "collect \$_ret: backtrace lists main"
+	}
+	-re ".*#1 .* in ?? .*\r\n$gdb_prompt $" {
+	    pass "collect \$_ret: backtrace not listing main"
+	}
+    }
+
+    gdb_test "tfind none" \
+	    "#0  end .*" \
+	    "collect \$_ret: cease trace debugging"
+}
+
+proc gdb_collect_strings_test { func mystr myrslt mylim msg } {
+    global hex
+    global cr
+    global gdb_prompt
+
+    prepare_for_trace_test
+
+    # Find the comment-identified line for setting this tracepoint.
+    set testline 0
+    gdb_test_multiple "list $func, +30" "collect $msg: find tracepoint line" {
+	-re "\[\r\n\](\[0-9\]+)\[^\r\n\]+ Set_Tracepoint_Here .*$gdb_prompt" {
+	    set testline $expect_out(1,string)
+	    pass "collect $msg: find tracepoint line"
+	}
+	-re ".*$gdb_prompt " {
+	    fail "collect $msg: find tracepoint line (skipping strings test)"
+	    return
+	}
+	timeout {
+	    fail "collect $msg: find tracepoint line (skipping strings test)"
+	    return
+	}
+    }
+
+    gdb_test "trace $testline" \
+	    "Tracepoint \[0-9\]+ at .*" \
+	    "collect $msg: set tracepoint"
+    gdb_trace_setactions "collect $msg: define actions" \
+	    "" \
+	    "collect/s$mylim $mystr" "^$"
+
+    # Begin the test.
+    run_trace_experiment $msg $func
+
+    gdb_test "print $mystr" \
+	"\\$\[0-9\]+ = $hex \"$myrslt\".*$cr" \
+	    "collect $msg: collected local string"
+
+    gdb_test "tfind none" \
+	    "#0  end .*" \
+	    "collect $msg: cease trace debugging"
 }
 
 proc gdb_trace_collection_test {} {
@@ -547,6 +689,7 @@ proc gdb_trace_collection_test {} {
     gdb_collect_registers_test "\$regs"
     gdb_collect_registers_test "\$$fpreg, \$$spreg, \$$pcreg"
     gdb_collect_globals_test
+    gdb_collect_global_in_pieces_test
     
     #
     # Expression tests:
@@ -619,15 +762,20 @@ proc gdb_trace_collection_test {} {
     gdb_collect_expression_test globals_test_func \
 	    "globalarr\[\(l6, l7\)\]" "7"    "a\[\(b, c\)\]"
 
+    gdb_collect_return_test
+
+    gdb_collect_strings_test strings_test_func "locstr" "abcdef" "" \
+	    "local string"
+
+    gdb_collect_strings_test strings_test_func "longloc" "how now brown c" 15 \
+	    "long local string"
+
 }
 
-clean_restart $executable
 runto_main
 
-# We generously give ourselves one "pass" if we successfully
-# detect that this test cannot be run on this target!
 if { ![gdb_target_supports_trace] } then {
-    pass "Current target does not support trace"
+    unsupported "Current target does not support trace"
     return 1;
 }
 

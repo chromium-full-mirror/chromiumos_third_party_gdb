@@ -1,5 +1,5 @@
 /* Low level interface to Windows debugging, for gdbserver.
-   Copyright (C) 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2006-2012 Free Software Foundation, Inc.
 
    Contributed by Leo Zayas.  Based on "win32-nat.c" from GDB.
 
@@ -24,14 +24,15 @@
 #include "gdb/fileio.h"
 #include "mem-break.h"
 #include "win32-low.h"
+#include "gdbthread.h"
 
+#include <stdint.h>
 #include <windows.h>
 #include <winnt.h>
 #include <imagehlp.h>
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <sys/param.h>
-#include <malloc.h>
 #include <process.h>
 
 #ifndef USE_WIN32API
@@ -73,7 +74,7 @@ static int attaching = 0;
 static HANDLE current_process_handle = NULL;
 static DWORD current_process_id = 0;
 static DWORD main_thread_id = 0;
-static enum target_signal last_sig = TARGET_SIGNAL_0;
+static enum gdb_signal last_sig = GDB_SIGNAL_0;
 
 /* The current debug event from WaitForDebugEvent.  */
 static DEBUG_EVENT current_event;
@@ -307,7 +308,7 @@ child_init_thread_list (void)
 static void
 do_initial_child_stuff (HANDLE proch, DWORD pid, int attached)
 {
-  last_sig = TARGET_SIGNAL_0;
+  last_sig = GDB_SIGNAL_0;
 
   current_process_handle = proch;
   current_process_id = pid;
@@ -536,13 +537,15 @@ win32_create_inferior (char *program, char **program_args)
   path_ptr = getenv ("PATH");
   if (path_ptr)
     {
+      int size = cygwin_conv_path_list (CCP_POSIX_TO_WIN_A, path_ptr, NULL, 0);
       orig_path = alloca (strlen (path_ptr) + 1);
-      new_path = alloca (cygwin_posix_to_win32_path_list_buf_size (path_ptr));
+      new_path = alloca (size);
       strcpy (orig_path, path_ptr);
-      cygwin_posix_to_win32_path_list (path_ptr, new_path);
+      cygwin_conv_path_list (CCP_POSIX_TO_WIN_A, path_ptr, new_path, size);
       setenv ("PATH", new_path, 1);
-    }
-  cygwin_conv_to_win32_path (program, real_path);
+     }
+  cygwin_conv_path (CCP_POSIX_TO_WIN_A, program, real_path,
+		    MAXPATHLEN);
   program = real_path;
 #endif
 
@@ -803,7 +806,7 @@ static void
 win32_resume (struct thread_resume *resume_info, size_t n)
 {
   DWORD tid;
-  enum target_signal sig;
+  enum gdb_signal sig;
   int step;
   win32_thread_info *th;
   DWORD continue_status = DBG_CONTINUE;
@@ -832,7 +835,7 @@ win32_resume (struct thread_resume *resume_info, size_t n)
       step = 0;
     }
 
-  if (sig != TARGET_SIGNAL_0)
+  if (sig != GDB_SIGNAL_0)
     {
       if (current_event.dwDebugEventCode != EXCEPTION_DEBUG_EVENT)
 	{
@@ -844,7 +847,7 @@ win32_resume (struct thread_resume *resume_info, size_t n)
 	OUTMSG (("Can only continue with recieved signal %d.\n", last_sig));
     }
 
-  last_sig = TARGET_SIGNAL_0;
+  last_sig = GDB_SIGNAL_0;
 
   /* Get context for the currently selected thread.  */
   ptid = debug_event_ptid (&current_event);
@@ -925,7 +928,7 @@ win32_add_one_solib (const char *name, CORE_ADDR load_addr)
 #endif
 
 #ifdef __CYGWIN__
-  cygwin_conv_to_posix_path (buf, buf2);
+  cygwin_conv_path (CCP_WIN_A_TO_POSIX, buf, buf2, sizeof (buf2));
 #else
   strcpy (buf2, buf);
 #endif
@@ -1202,7 +1205,7 @@ handle_load_dll (void)
     return;
 
   /* The symbols in a dll are offset by 0x1000, which is the
-     the offset from 0 of the first byte in an image - because
+     offset from 0 of the first byte in an image - because
      of the file header and the section alignment. */
 
   load_addr = (CORE_ADDR) (uintptr_t) event->lpBaseOfDll + 0x1000;
@@ -1229,55 +1232,55 @@ handle_exception (struct target_waitstatus *ourstatus)
     {
     case EXCEPTION_ACCESS_VIOLATION:
       OUTMSG2 (("EXCEPTION_ACCESS_VIOLATION"));
-      ourstatus->value.sig = TARGET_SIGNAL_SEGV;
+      ourstatus->value.sig = GDB_SIGNAL_SEGV;
       break;
     case STATUS_STACK_OVERFLOW:
       OUTMSG2 (("STATUS_STACK_OVERFLOW"));
-      ourstatus->value.sig = TARGET_SIGNAL_SEGV;
+      ourstatus->value.sig = GDB_SIGNAL_SEGV;
       break;
     case STATUS_FLOAT_DENORMAL_OPERAND:
       OUTMSG2 (("STATUS_FLOAT_DENORMAL_OPERAND"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
       OUTMSG2 (("EXCEPTION_ARRAY_BOUNDS_EXCEEDED"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_FLOAT_INEXACT_RESULT:
       OUTMSG2 (("STATUS_FLOAT_INEXACT_RESULT"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_FLOAT_INVALID_OPERATION:
       OUTMSG2 (("STATUS_FLOAT_INVALID_OPERATION"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_FLOAT_OVERFLOW:
       OUTMSG2 (("STATUS_FLOAT_OVERFLOW"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_FLOAT_STACK_CHECK:
       OUTMSG2 (("STATUS_FLOAT_STACK_CHECK"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_FLOAT_UNDERFLOW:
       OUTMSG2 (("STATUS_FLOAT_UNDERFLOW"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_FLOAT_DIVIDE_BY_ZERO:
       OUTMSG2 (("STATUS_FLOAT_DIVIDE_BY_ZERO"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_INTEGER_DIVIDE_BY_ZERO:
       OUTMSG2 (("STATUS_INTEGER_DIVIDE_BY_ZERO"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case STATUS_INTEGER_OVERFLOW:
       OUTMSG2 (("STATUS_INTEGER_OVERFLOW"));
-      ourstatus->value.sig = TARGET_SIGNAL_FPE;
+      ourstatus->value.sig = GDB_SIGNAL_FPE;
       break;
     case EXCEPTION_BREAKPOINT:
       OUTMSG2 (("EXCEPTION_BREAKPOINT"));
-      ourstatus->value.sig = TARGET_SIGNAL_TRAP;
+      ourstatus->value.sig = GDB_SIGNAL_TRAP;
 #ifdef _WIN32_WCE
       /* Remove the initial breakpoint.  */
       check_breakpoints ((CORE_ADDR) (long) current_event
@@ -1286,27 +1289,27 @@ handle_exception (struct target_waitstatus *ourstatus)
       break;
     case DBG_CONTROL_C:
       OUTMSG2 (("DBG_CONTROL_C"));
-      ourstatus->value.sig = TARGET_SIGNAL_INT;
+      ourstatus->value.sig = GDB_SIGNAL_INT;
       break;
     case DBG_CONTROL_BREAK:
       OUTMSG2 (("DBG_CONTROL_BREAK"));
-      ourstatus->value.sig = TARGET_SIGNAL_INT;
+      ourstatus->value.sig = GDB_SIGNAL_INT;
       break;
     case EXCEPTION_SINGLE_STEP:
       OUTMSG2 (("EXCEPTION_SINGLE_STEP"));
-      ourstatus->value.sig = TARGET_SIGNAL_TRAP;
+      ourstatus->value.sig = GDB_SIGNAL_TRAP;
       break;
     case EXCEPTION_ILLEGAL_INSTRUCTION:
       OUTMSG2 (("EXCEPTION_ILLEGAL_INSTRUCTION"));
-      ourstatus->value.sig = TARGET_SIGNAL_ILL;
+      ourstatus->value.sig = GDB_SIGNAL_ILL;
       break;
     case EXCEPTION_PRIV_INSTRUCTION:
       OUTMSG2 (("EXCEPTION_PRIV_INSTRUCTION"));
-      ourstatus->value.sig = TARGET_SIGNAL_ILL;
+      ourstatus->value.sig = GDB_SIGNAL_ILL;
       break;
     case EXCEPTION_NONCONTINUABLE_EXCEPTION:
       OUTMSG2 (("EXCEPTION_NONCONTINUABLE_EXCEPTION"));
-      ourstatus->value.sig = TARGET_SIGNAL_ILL;
+      ourstatus->value.sig = GDB_SIGNAL_ILL;
       break;
     default:
       if (current_event.u.Exception.dwFirstChance)
@@ -1318,7 +1321,7 @@ handle_exception (struct target_waitstatus *ourstatus)
 		current_event.u.Exception.ExceptionRecord.ExceptionCode,
 		phex_nz ((uintptr_t) current_event.u.Exception.ExceptionRecord.
 		ExceptionAddress, sizeof (uintptr_t))));
-      ourstatus->value.sig = TARGET_SIGNAL_UNKNOWN;
+      ourstatus->value.sig = GDB_SIGNAL_UNKNOWN;
       break;
     }
   OUTMSG2 (("\n"));
@@ -1376,7 +1379,7 @@ get_child_debug_event (struct target_waitstatus *ourstatus)
 {
   ptid_t ptid;
 
-  last_sig = TARGET_SIGNAL_0;
+  last_sig = GDB_SIGNAL_0;
   ourstatus->kind = TARGET_WAITKIND_SPURIOUS;
 
   /* Check if GDB sent us an interrupt request.  */
@@ -1526,7 +1529,7 @@ get_child_debug_event (struct target_waitstatus *ourstatus)
       handle_load_dll ();
 
       ourstatus->kind = TARGET_WAITKIND_LOADED;
-      ourstatus->value.sig = TARGET_SIGNAL_TRAP;
+      ourstatus->value.sig = GDB_SIGNAL_TRAP;
       break;
 
     case UNLOAD_DLL_DEBUG_EVENT:
@@ -1536,7 +1539,7 @@ get_child_debug_event (struct target_waitstatus *ourstatus)
 		(unsigned) current_event.dwThreadId));
       handle_unload_dll ();
       ourstatus->kind = TARGET_WAITKIND_LOADED;
-      ourstatus->value.sig = TARGET_SIGNAL_TRAP;
+      ourstatus->value.sig = GDB_SIGNAL_TRAP;
       break;
 
     case EXCEPTION_DEBUG_EVENT:
@@ -1781,6 +1784,8 @@ static struct target_ops win32_target_ops = {
   win32_wait,
   win32_fetch_inferior_registers,
   win32_store_inferior_registers,
+  NULL, /* prepare_to_access_memory */
+  NULL, /* done_accessing_memory */
   win32_read_inferior_memory,
   win32_write_inferior_memory,
   NULL, /* lookup_symbols */
@@ -1806,6 +1811,7 @@ static struct target_ops win32_target_ops = {
   NULL, /* supports_multi_process */
   NULL, /* handle_monitor_command */
   NULL, /* core_of_thread */
+  NULL, /* read_loadmap */
   NULL, /* process_qsupported */
   NULL, /* supports_tracepoints */
   NULL, /* read_pc */

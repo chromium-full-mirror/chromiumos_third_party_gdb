@@ -1,6 +1,6 @@
 /* BSD user-level threads support.
 
-   Copyright (C) 2005, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2005, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -104,7 +104,7 @@ bsd_uthread_check_magic (CORE_ADDR addr)
 #define BSD_UTHREAD_PS_RUNNING	0
 #define BSD_UTHREAD_PS_DEAD	18
 
-/* Address of the pointer to the the thread structure for the running
+/* Address of the pointer to the thread structure for the running
    thread.  */
 static CORE_ADDR bsd_uthread_thread_run_addr;
 
@@ -397,7 +397,7 @@ bsd_uthread_wait (struct target_ops *ops,
 
 static void
 bsd_uthread_resume (struct target_ops *ops,
-		    ptid_t ptid, int step, enum target_signal sig)
+		    ptid_t ptid, int step, enum gdb_signal sig)
 {
   /* Pass the request to the layer beneath.  */
   struct target_ops *beneath = find_target_beneath (ops);

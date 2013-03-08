@@ -1,7 +1,6 @@
 /* YACC parser for C expressions, for GDB.
-   Copyright (C) 1986, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997,
-   1998, 1999, 2000, 2003, 2004, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1986, 1989-2000, 2003-2004, 2006-2012 Free Software
+   Foundation, Inc.
 
    This file is part of GDB.
 
@@ -104,6 +103,12 @@
 #define yygindex c_yygindex
 #define yytable	 c_yytable
 #define yycheck	 c_yycheck
+#define yyss	c_yyss
+#define yysslim	c_yysslim
+#define yyssp	c_yyssp
+#define yystacksize c_yystacksize
+#define yyvs	c_yyvs
+#define yyvsp	c_yyvsp
 
 #ifndef YYDEBUG
 #define	YYDEBUG 1		/* Default to yydebug support */
@@ -150,26 +155,31 @@ void yyerror (char *);
     struct internalvar *ivar;
 
     struct stoken_vector svec;
-    struct type **tvec;
+    VEC (type_ptr) *tvec;
     int *ivec;
+
+    struct type_stack *type_stack;
   }
 
 %{
 /* YYSTYPE gets defined by %union */
 static int parse_number (char *, int, int, YYSTYPE *);
 static struct stoken operator_stoken (const char *);
+static void check_parameter_typelist (VEC (type_ptr) *);
 %}
 
 %type <voidval> exp exp1 type_exp start variable qualified_name lcurly
 %type <lval> rcurly
 %type <tval> type typebase
-%type <tvec> nonempty_typelist
+%type <tvec> nonempty_typelist func_mod parameter_typelist
 /* %type <bval> block */
 
 /* Fancy type parsing.  */
-%type <voidval> func_mod direct_abs_decl abs_decl
 %type <tval> ptype
 %type <lval> array_mod
+%type <tval> conversion_type_id
+
+%type <type_stack> ptr_operator_ts abs_decl direct_abs_decl
 
 %token <typed_val_int> INT
 %token <typed_val_float> FLOAT
@@ -208,6 +218,7 @@ static struct stoken operator_stoken (const char *);
 %token NEW DELETE
 %type <sval> operator
 %token REINTERPRET_CAST DYNAMIC_CAST STATIC_CAST CONST_CAST
+%token ENTRY
 
 /* Special type cases, put in to allow the parser to distinguish different
    legal basetypes.  */
@@ -243,6 +254,8 @@ static struct stoken operator_stoken (const char *);
 %token <bval> FILENAME
 %type <bval> block
 %left COLONCOLON
+
+%token DOTDOTDOT
 
 
 %%
@@ -430,15 +443,21 @@ arglist	:	arglist ',' exp   %prec ABOVE_COMMA
 			{ arglist_len++; }
 	;
 
-exp     :       exp '(' nonempty_typelist ')' const_or_volatile
+exp     :       exp '(' parameter_typelist ')' const_or_volatile
 			{ int i;
+			  VEC (type_ptr) *type_list = $3;
+			  struct type *type_elt;
+			  LONGEST len = VEC_length (type_ptr, type_list);
+
 			  write_exp_elt_opcode (TYPE_INSTANCE);
-			  write_exp_elt_longcst ((LONGEST) $<ivec>3[0]);
-			  for (i = 0; i < $<ivec>3[0]; ++i)
-			    write_exp_elt_type ($<tvec>3[i + 1]);
-			  write_exp_elt_longcst((LONGEST) $<ivec>3[0]);
+			  write_exp_elt_longcst (len);
+			  for (i = 0;
+			       VEC_iterate (type_ptr, type_list, i, type_elt);
+			       ++i)
+			    write_exp_elt_type (type_elt);
+			  write_exp_elt_longcst(len);
 			  write_exp_elt_opcode (TYPE_INSTANCE);
-			  free ($3);
+			  VEC_free (type_ptr, type_list);
 			}
 	;
 
@@ -612,7 +631,9 @@ exp	:	VARIABLE
 
 exp	:	SIZEOF '(' type ')'	%prec UNARY
 			{ write_exp_elt_opcode (OP_LONG);
-			  write_exp_elt_type (parse_type->builtin_int);
+			  write_exp_elt_type (lookup_signed_typename
+					      (parse_language, parse_gdbarch,
+					       "int"));
 			  CHECK_TYPEDEF ($3);
 			  write_exp_elt_longcst ((LONGEST) TYPE_LENGTH ($3));
 			  write_exp_elt_opcode (OP_LONG); }
@@ -696,7 +717,7 @@ exp	:	string_exp
 				case C_STRING_32:
 				  if (type != C_STRING
 				      && type != $1.tokens[i].type)
-				    error ("Undefined string concatenation.");
+				    error (_("Undefined string concatenation."));
 				  type = $1.tokens[i].type;
 				  break;
 				default:
@@ -735,7 +756,7 @@ block	:	BLOCKNAME
 			  if ($1.sym)
 			    $$ = SYMBOL_BLOCK_VALUE ($1.sym);
 			  else
-			    error ("No file or function \"%s\".",
+			    error (_("No file or function \"%s\"."),
 				   copy_name ($1.stoken));
 			}
 	|	FILENAME
@@ -749,9 +770,24 @@ block	:	block COLONCOLON name
 			    = lookup_symbol (copy_name ($3), $1,
 					     VAR_DOMAIN, (int *) NULL);
 			  if (!tem || SYMBOL_CLASS (tem) != LOC_BLOCK)
-			    error ("No function \"%s\" in specified context.",
+			    error (_("No function \"%s\" in specified context."),
 				   copy_name ($3));
 			  $$ = SYMBOL_BLOCK_VALUE (tem); }
+	;
+
+variable:	name_not_typename ENTRY
+			{ struct symbol *sym = $1.sym;
+
+			  if (sym == NULL || !SYMBOL_IS_ARGUMENT (sym)
+			      || !symbol_read_needs_frame (sym))
+			    error (_("@entry can be used only for function "
+				     "parameters, not for \"%s\""),
+				   copy_name ($1.stoken));
+
+			  write_exp_elt_opcode (OP_VAR_ENTRY_VALUE);
+			  write_exp_elt_sym (sym);
+			  write_exp_elt_opcode (OP_VAR_ENTRY_VALUE);
+			}
 	;
 
 variable:	block COLONCOLON name
@@ -759,8 +795,15 @@ variable:	block COLONCOLON name
 			  sym = lookup_symbol (copy_name ($3), $1,
 					       VAR_DOMAIN, (int *) NULL);
 			  if (sym == 0)
-			    error ("No symbol \"%s\" in specified context.",
+			    error (_("No symbol \"%s\" in specified context."),
 				   copy_name ($3));
+			  if (symbol_read_needs_frame (sym))
+			    {
+			      if (innermost_block == 0
+				  || contained_in (block_found,
+						   innermost_block))
+				innermost_block = block_found;
+			    }
 
 			  write_exp_elt_opcode (OP_VAR_VALUE);
 			  /* block_found is set by lookup_symbol.  */
@@ -776,7 +819,7 @@ qualified_name:	TYPENAME COLONCOLON name
 			  if (TYPE_CODE (type) != TYPE_CODE_STRUCT
 			      && TYPE_CODE (type) != TYPE_CODE_UNION
 			      && TYPE_CODE (type) != TYPE_CODE_NAMESPACE)
-			    error ("`%s' is not defined as an aggregate type.",
+			    error (_("`%s' is not defined as an aggregate type."),
 				   TYPE_NAME (type));
 
 			  write_exp_elt_opcode (OP_SCOPE);
@@ -792,7 +835,7 @@ qualified_name:	TYPENAME COLONCOLON name
 			  if (TYPE_CODE (type) != TYPE_CODE_STRUCT
 			      && TYPE_CODE (type) != TYPE_CODE_UNION
 			      && TYPE_CODE (type) != TYPE_CODE_NAMESPACE)
-			    error ("`%s' is not defined as an aggregate type.",
+			    error (_("`%s' is not defined as an aggregate type."),
 				   TYPE_NAME (type));
 
 			  tmp_token.ptr = (char*) alloca ($4.length + 2);
@@ -802,7 +845,7 @@ qualified_name:	TYPENAME COLONCOLON name
 			  tmp_token.ptr[tmp_token.length] = 0;
 
 			  /* Check for valid destructor name.  */
-			  destructor_name_p (tmp_token.ptr, type);
+			  destructor_name_p (tmp_token.ptr, $1.type);
 			  write_exp_elt_opcode (OP_SCOPE);
 			  write_exp_elt_type (type);
 			  write_exp_string (tmp_token);
@@ -840,9 +883,9 @@ variable:	qualified_name
 			  if (msymbol != NULL)
 			    write_exp_msymbol (msymbol);
 			  else if (!have_full_symbols () && !have_partial_symbols ())
-			    error ("No symbol table is loaded.  Use the \"file\" command.");
+			    error (_("No symbol table is loaded.  Use the \"file\" command."));
 			  else
-			    error ("No symbol \"%s\" in current context.", name);
+			    error (_("No symbol \"%s\" in current context."), name);
 			}
 	;
 
@@ -892,18 +935,16 @@ variable:	name_not_typename
 			      if (msymbol != NULL)
 				write_exp_msymbol (msymbol);
 			      else if (!have_full_symbols () && !have_partial_symbols ())
-				error ("No symbol table is loaded.  Use the \"file\" command.");
+				error (_("No symbol table is loaded.  Use the \"file\" command."));
 			      else
-				error ("No symbol \"%s\" in current context.",
+				error (_("No symbol \"%s\" in current context."),
 				       copy_name ($1.stoken));
 			    }
 			}
 	;
 
 space_identifier : '@' NAME
-		{ push_type_address_space (copy_name ($2.stoken));
-		  push_type (tp_space_identifier);
-		}
+		{ insert_type_address_space (copy_name ($2.stoken)); }
 	;
 
 const_or_volatile: const_or_volatile_noopt
@@ -922,14 +963,31 @@ const_or_volatile_or_space_identifier:
 	|
 	;
 
-abs_decl:	'*'
-			{ push_type (tp_pointer); $$ = 0; }
-	|	'*' abs_decl
-			{ push_type (tp_pointer); $$ = $2; }
+ptr_operator:
+		ptr_operator '*'
+			{ insert_type (tp_pointer); }
+		const_or_volatile_or_space_identifier
+	|	'*' 
+			{ insert_type (tp_pointer); }
+		const_or_volatile_or_space_identifier
 	|	'&'
-			{ push_type (tp_reference); $$ = 0; }
-	|	'&' abs_decl
-			{ push_type (tp_reference); $$ = $2; }
+			{ insert_type (tp_reference); }
+	|	'&' ptr_operator
+			{ insert_type (tp_reference); }
+	;
+
+ptr_operator_ts: ptr_operator
+			{
+			  $$ = get_type_stack ();
+			  /* This cleanup is eventually run by
+			     c_parse.  */
+			  make_cleanup (type_stack_cleanup, $$);
+			}
+	;
+
+abs_decl:	ptr_operator_ts direct_abs_decl
+			{ $$ = append_type_stack ($2, $1); }
+	|	ptr_operator_ts 
 	|	direct_abs_decl
 	;
 
@@ -937,20 +995,29 @@ direct_abs_decl: '(' abs_decl ')'
 			{ $$ = $2; }
 	|	direct_abs_decl array_mod
 			{
+			  push_type_stack ($1);
 			  push_type_int ($2);
 			  push_type (tp_array);
+			  $$ = get_type_stack ();
 			}
 	|	array_mod
 			{
 			  push_type_int ($1);
 			  push_type (tp_array);
-			  $$ = 0;
+			  $$ = get_type_stack ();
 			}
 
 	| 	direct_abs_decl func_mod
-			{ push_type (tp_function); }
+			{
+			  push_type_stack ($1);
+			  push_typelist ($2);
+			  $$ = get_type_stack ();
+			}
 	|	func_mod
-			{ push_type (tp_function); }
+			{
+			  push_typelist ($1);
+			  $$ = get_type_stack ();
+			}
 	;
 
 array_mod:	'[' ']'
@@ -960,9 +1027,9 @@ array_mod:	'[' ']'
 	;
 
 func_mod:	'(' ')'
-			{ $$ = 0; }
-	|	'(' nonempty_typelist ')'
-			{ free ($2); $$ = 0; }
+			{ $$ = NULL; }
+	|	'(' parameter_typelist ')'
+			{ $$ = $2; }
 	;
 
 /* We used to try to recognize pointer to member types here, but
@@ -980,61 +1047,117 @@ typebase  /* Implements (approximately): (type-qualifier)* type-specifier */
 	:	TYPENAME
 			{ $$ = $1.type; }
 	|	INT_KEYWORD
-			{ $$ = parse_type->builtin_int; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "int"); }
 	|	LONG
-			{ $$ = parse_type->builtin_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long"); }
 	|	SHORT
-			{ $$ = parse_type->builtin_short; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "short"); }
 	|	LONG INT_KEYWORD
-			{ $$ = parse_type->builtin_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long"); }
 	|	LONG SIGNED_KEYWORD INT_KEYWORD
-			{ $$ = parse_type->builtin_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long"); }
 	|	LONG SIGNED_KEYWORD
-			{ $$ = parse_type->builtin_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long"); }
 	|	SIGNED_KEYWORD LONG INT_KEYWORD
-			{ $$ = parse_type->builtin_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long"); }
 	|	UNSIGNED LONG INT_KEYWORD
-			{ $$ = parse_type->builtin_unsigned_long; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "long"); }
 	|	LONG UNSIGNED INT_KEYWORD
-			{ $$ = parse_type->builtin_unsigned_long; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "long"); }
 	|	LONG UNSIGNED
-			{ $$ = parse_type->builtin_unsigned_long; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "long"); }
 	|	LONG LONG
-			{ $$ = parse_type->builtin_long_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long long"); }
 	|	LONG LONG INT_KEYWORD
-			{ $$ = parse_type->builtin_long_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long long"); }
 	|	LONG LONG SIGNED_KEYWORD INT_KEYWORD
-			{ $$ = parse_type->builtin_long_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long long"); }
 	|	LONG LONG SIGNED_KEYWORD
-			{ $$ = parse_type->builtin_long_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long long"); }
 	|	SIGNED_KEYWORD LONG LONG
-			{ $$ = parse_type->builtin_long_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long long"); }
 	|	SIGNED_KEYWORD LONG LONG INT_KEYWORD
-			{ $$ = parse_type->builtin_long_long; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "long long"); }
 	|	UNSIGNED LONG LONG
-			{ $$ = parse_type->builtin_unsigned_long_long; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "long long"); }
 	|	UNSIGNED LONG LONG INT_KEYWORD
-			{ $$ = parse_type->builtin_unsigned_long_long; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "long long"); }
 	|	LONG LONG UNSIGNED
-			{ $$ = parse_type->builtin_unsigned_long_long; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "long long"); }
 	|	LONG LONG UNSIGNED INT_KEYWORD
-			{ $$ = parse_type->builtin_unsigned_long_long; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "long long"); }
 	|	SHORT INT_KEYWORD
-			{ $$ = parse_type->builtin_short; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "short"); }
 	|	SHORT SIGNED_KEYWORD INT_KEYWORD
-			{ $$ = parse_type->builtin_short; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "short"); }
 	|	SHORT SIGNED_KEYWORD
-			{ $$ = parse_type->builtin_short; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "short"); }
 	|	UNSIGNED SHORT INT_KEYWORD
-			{ $$ = parse_type->builtin_unsigned_short; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "short"); }
 	|	SHORT UNSIGNED 
-			{ $$ = parse_type->builtin_unsigned_short; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "short"); }
 	|	SHORT UNSIGNED INT_KEYWORD
-			{ $$ = parse_type->builtin_unsigned_short; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "short"); }
 	|	DOUBLE_KEYWORD
-			{ $$ = parse_type->builtin_double; }
+			{ $$ = lookup_typename (parse_language, parse_gdbarch,
+						"double", (struct block *) NULL,
+						0); }
 	|	LONG DOUBLE_KEYWORD
-			{ $$ = parse_type->builtin_long_double; }
+			{ $$ = lookup_typename (parse_language, parse_gdbarch,
+						"long double",
+						(struct block *) NULL, 0); }
 	|	STRUCT name
 			{ $$ = lookup_struct (copy_name ($2),
 					      expression_context_block); }
@@ -1052,13 +1175,17 @@ typebase  /* Implements (approximately): (type-qualifier)* type-specifier */
 							 parse_gdbarch,
 							 TYPE_NAME($2.type)); }
 	|	UNSIGNED
-			{ $$ = parse_type->builtin_unsigned_int; }
+			{ $$ = lookup_unsigned_typename (parse_language,
+							 parse_gdbarch,
+							 "int"); }
 	|	SIGNED_KEYWORD typename
 			{ $$ = lookup_signed_typename (parse_language,
 						       parse_gdbarch,
 						       TYPE_NAME($2.type)); }
 	|	SIGNED_KEYWORD
-			{ $$ = parse_type->builtin_int; }
+			{ $$ = lookup_signed_typename (parse_language,
+						       parse_gdbarch,
+						       "int"); }
                 /* It appears that this rule for templates is never
                    reduced; template recognition happens by lookahead
                    in the token processing code in yylex. */         
@@ -1077,38 +1204,67 @@ typename:	TYPENAME
 		{
 		  $$.stoken.ptr = "int";
 		  $$.stoken.length = 3;
-		  $$.type = parse_type->builtin_int;
+		  $$.type = lookup_signed_typename (parse_language,
+						    parse_gdbarch,
+						    "int");
 		}
 	|	LONG
 		{
 		  $$.stoken.ptr = "long";
 		  $$.stoken.length = 4;
-		  $$.type = parse_type->builtin_long;
+		  $$.type = lookup_signed_typename (parse_language,
+						    parse_gdbarch,
+						    "long");
 		}
 	|	SHORT
 		{
 		  $$.stoken.ptr = "short";
 		  $$.stoken.length = 5;
-		  $$.type = parse_type->builtin_short;
+		  $$.type = lookup_signed_typename (parse_language,
+						    parse_gdbarch,
+						    "short");
 		}
+	;
+
+parameter_typelist:
+		nonempty_typelist
+			{ check_parameter_typelist ($1); }
+	|	nonempty_typelist ',' DOTDOTDOT
+			{
+			  VEC_safe_push (type_ptr, $1, NULL);
+			  check_parameter_typelist ($1);
+			  $$ = $1;
+			}
 	;
 
 nonempty_typelist
 	:	type
-		{ $$ = (struct type **) malloc (sizeof (struct type *) * 2);
-		  $<ivec>$[0] = 1;	/* Number of types in vector */
-		  $$[1] = $1;
+		{
+		  VEC (type_ptr) *typelist = NULL;
+		  VEC_safe_push (type_ptr, typelist, $1);
+		  $$ = typelist;
 		}
 	|	nonempty_typelist ',' type
-		{ int len = sizeof (struct type *) * (++($<ivec>1[0]) + 1);
-		  $$ = (struct type **) realloc ((char *) $1, len);
-		  $$[$<ivec>$[0]] = $3;
+		{
+		  VEC_safe_push (type_ptr, $1, $3);
+		  $$ = $1;
 		}
 	;
 
 ptype	:	typebase
-	|	ptype const_or_volatile_or_space_identifier abs_decl const_or_volatile_or_space_identifier
+	|	ptype abs_decl
+		{
+		  push_type_stack ($2);
+		  $$ = follow_types ($1);
+		}
+	;
+
+conversion_type_id: typebase conversion_declarator
 		{ $$ = follow_types ($1); }
+	;
+
+conversion_declarator:  /* Nothing.  */
+	| ptr_operator conversion_declarator
 	;
 
 const_and_volatile: 	CONST_KEYWORD VOLATILE_KEYWORD
@@ -1116,13 +1272,13 @@ const_and_volatile: 	CONST_KEYWORD VOLATILE_KEYWORD
 	;
 
 const_or_volatile_noopt:  	const_and_volatile 
-			{ push_type (tp_const);
-			  push_type (tp_volatile); 
+			{ insert_type (tp_const);
+			  insert_type (tp_volatile); 
 			}
 	| 		CONST_KEYWORD
-			{ push_type (tp_const); }
+			{ insert_type (tp_const); }
 	| 		VOLATILE_KEYWORD
-			{ push_type (tp_volatile); }
+			{ insert_type (tp_volatile); }
 	;
 
 operator:	OPERATOR NEW
@@ -1229,7 +1385,7 @@ operator:	OPERATOR NEW
 			{ $$ = operator_stoken ("()"); }
 	|	OPERATOR '[' ']'
 			{ $$ = operator_stoken ("[]"); }
-	|	OPERATOR ptype
+	|	OPERATOR conversion_type_id
 			{ char *name;
 			  long length;
 			  struct ui_file *buf = mem_fileopen ();
@@ -1291,6 +1447,37 @@ operator_stoken (const char *op)
   return st;
 };
 
+/* Validate a parameter typelist.  */
+
+static void
+check_parameter_typelist (VEC (type_ptr) *params)
+{
+  struct type *type;
+  int ix;
+
+  for (ix = 0; VEC_iterate (type_ptr, params, ix, type); ++ix)
+    {
+      if (type != NULL && TYPE_CODE (check_typedef (type)) == TYPE_CODE_VOID)
+	{
+	  if (ix == 0)
+	    {
+	      if (VEC_length (type_ptr, params) == 1)
+		{
+		  /* Ok.  */
+		  break;
+		}
+	      VEC_free (type_ptr, params);
+	      error (_("parameter types following 'void'"));
+	    }
+	  else
+	    {
+	      VEC_free (type_ptr, params);
+	      error (_("'void' invalid as parameter type"));
+	    }
+	}
+    }
+}
+
 /* Take care of parsing a number (anything that starts with a digit).
    Set yylval and return the token type; update lexptr.
    LEN is the number of characters in it.  */
@@ -1323,11 +1510,6 @@ parse_number (char *p, int len, int parsed_float, YYSTYPE *putithere)
 
   if (parsed_float)
     {
-      /* It's a float since it contains a point or an exponent.  */
-      char *s;
-      int num;	/* number of tokens scanned by scanf */
-      char saved_char;
-
       /* If it ends at "df", "dd" or "dl", take it as type of decimal floating
          point.  Return DECFLOAT.  */
 
@@ -1364,41 +1546,10 @@ parse_number (char *p, int len, int parsed_float, YYSTYPE *putithere)
 	  return DECFLOAT;
 	}
 
-      s = malloc (len);
-      saved_char = p[len];
-      p[len] = 0;	/* null-terminate the token */
-      num = sscanf (p, "%" DOUBLEST_SCAN_FORMAT "%s",
-		    &putithere->typed_val_float.dval, s);
-      p[len] = saved_char;	/* restore the input stream */
-
-      if (num == 0)
-	{
-	  free (s);
-	  return ERROR;
-	}
-
-      if (num == 1)
-	putithere->typed_val_float.type = 
-	  parse_type->builtin_double;
-
-      if (num == 2 )
-	{
-	  /* See if it has any float suffix: 'f' for float, 'l' for long 
-	     double.  */
-	  if (!strcasecmp (s, "f"))
-	    putithere->typed_val_float.type = 
-	      parse_type->builtin_float;
-	  else if (!strcasecmp (s, "l"))
-	    putithere->typed_val_float.type = 
-	      parse_type->builtin_long_double;
-	  else
-	    {
-	      free (s);
-	      return ERROR;
-	    }
-	}
-
-      free (s);
+      if (! parse_c_float (parse_gdbarch, p, len,
+			   &putithere->typed_val_float.dval,
+			   &putithere->typed_val_float.type))
+	return ERROR;
       return FLOAT;
     }
 
@@ -1492,7 +1643,7 @@ parse_number (char *p, int len, int parsed_float, YYSTYPE *putithere)
       if (c != 'l' && c != 'u' && n != 0)
 	{	
 	  if ((unsigned_p && (ULONGEST) prevn >= (ULONGEST) n))
-	    error ("Numeric constant too large.");
+	    error (_("Numeric constant too large."));
 	}
       prevn = n;
     }
@@ -1809,9 +1960,9 @@ parse_string_or_char (char *tokptr, char **outptr, struct typed_stoken *value,
   if (*tokptr != quote)
     {
       if (quote == '"')
-	error ("Unterminated string in expression.");
+	error (_("Unterminated string in expression."));
       else
-	error ("Unmatched single quote.");
+	error (_("Unmatched single quote."));
     }
   ++tokptr;
 
@@ -1836,7 +1987,8 @@ static const struct token tokentab3[] =
   {
     {">>=", ASSIGN_MODIFY, BINOP_RSH, 0},
     {"<<=", ASSIGN_MODIFY, BINOP_LSH, 0},
-    {"->*", ARROW_STAR, BINOP_END, 1}
+    {"->*", ARROW_STAR, BINOP_END, 1},
+    {"...", DOTDOTDOT, BINOP_END, 0}
   };
 
 static const struct token tokentab2[] =
@@ -2183,12 +2335,27 @@ lex_one_token (void)
 
 	    memcpy (err_copy, tokstart, p - tokstart);
 	    err_copy[p - tokstart] = 0;
-	    error ("Invalid number \"%s\".", err_copy);
+	    error (_("Invalid number \"%s\"."), err_copy);
 	  }
 	lexptr = p;
 	return toktype;
       }
 
+    case '@':
+      {
+	char *p = &tokstart[1];
+	size_t len = strlen ("entry");
+
+	while (isspace (*p))
+	  p++;
+	if (strncmp (p, "entry", len) == 0 && !isalnum (p[len])
+	    && p[len] != '_')
+	  {
+	    lexptr = &p[len];
+	    return ENTRY;
+	  }
+      }
+      /* FALLTHRU */
     case '+':
     case '-':
     case '*':
@@ -2199,7 +2366,6 @@ lex_one_token (void)
     case '^':
     case '~':
     case '!':
-    case '@':
     case '<':
     case '>':
     case '?':
@@ -2226,7 +2392,7 @@ lex_one_token (void)
 	if (result == CHAR)
 	  {
 	    if (host_len == 0)
-	      error ("Empty character constant.");
+	      error (_("Empty character constant."));
 	    else if (host_len > 2 && c == '\'')
 	      {
 		++tokstart;
@@ -2234,7 +2400,7 @@ lex_one_token (void)
 		goto tryname;
 	      }
 	    else if (host_len > 1)
-	      error ("Invalid character constant.");
+	      error (_("Invalid character constant."));
 	  }
 	return result;
       }
@@ -2243,7 +2409,7 @@ lex_one_token (void)
   if (!(c == '_' || c == '$'
 	|| (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')))
     /* We must have come across a bad character (e.g. ';').  */
-    error ("Invalid character '%c' in expression.", c);
+    error (_("Invalid character '%c' in expression."), c);
 
   /* It's a name.  See how long it is.  */
   namelen = 0;
@@ -2422,6 +2588,7 @@ classify_name (struct block *block)
 
   if (sym == NULL
       && parse_language->la_language == language_cplus
+      && !is_a_field_of_this
       && !lookup_minimal_symbol (copy, NULL, NULL))
     return UNKNOWN_CPP_NAME;
 
@@ -2430,9 +2597,8 @@ classify_name (struct block *block)
 
 /* Like classify_name, but used by the inner loop of the lexer, when a
    name might have already been seen.  FIRST_NAME is true if the token
-   in `yylval' is the first component of a name, false otherwise.  If
-   this function returns NAME, it might not have updated `yylval'.
-   This is ok because the caller only cares about TYPENAME.  */
+   in `yylval' is the first component of a name, false otherwise.  */
+
 static int
 classify_inner_name (struct block *block, int first_name)
 {
@@ -2446,18 +2612,28 @@ classify_inner_name (struct block *block, int first_name)
   if (TYPE_CODE (type) != TYPE_CODE_STRUCT
       && TYPE_CODE (type) != TYPE_CODE_UNION
       && TYPE_CODE (type) != TYPE_CODE_NAMESPACE)
-    /* We know the caller won't expect us to update yylval.  */
-    return NAME;
+    return ERROR;
 
   copy = copy_name (yylval.tsym.stoken);
-  new_type = cp_lookup_nested_type (type, copy, block);
+  yylval.ssym.sym = cp_lookup_nested_symbol (yylval.tsym.type, copy, block);
+  if (yylval.ssym.sym == NULL)
+    return ERROR;
 
-  if (new_type == NULL)
-    /* We know the caller won't expect us to update yylval.  */
-    return NAME;
+  switch (SYMBOL_CLASS (yylval.ssym.sym))
+    {
+    case LOC_BLOCK:
+    case LOC_LABEL:
+      return ERROR;
 
-  yylval.tsym.type = new_type;
-  return TYPENAME;
+    case LOC_TYPEDEF:
+      yylval.tsym.type = SYMBOL_TYPE (yylval.ssym.sym);;
+      return TYPENAME;
+
+    default:
+      yylval.ssym.is_a_field_of_this = 0;
+      return NAME;
+    }
+  internal_error (__FILE__, __LINE__, _("not reached"));
 }
 
 /* The outer level of a two-level lexer.  This calls the inner lexer
@@ -2517,7 +2693,7 @@ yylex (void)
 						first_iter);
 	  /* We keep going until we either run out of names, or until
 	     we have a qualified name which is not a type.  */
-	  if (classification != TYPENAME)
+	  if (classification != TYPENAME && classification != NAME)
 	    {
 	      /* Push the final component and leave the loop.  */
 	      VEC_safe_push (token_and_value, token_fifo, &next);
@@ -2622,5 +2798,5 @@ yyerror (char *msg)
   if (prev_lexptr)
     lexptr = prev_lexptr;
 
-  error ("A %s in expression, near `%s'.", (msg ? msg : "error"), lexptr);
+  error (_("A %s in expression, near `%s'."), (msg ? msg : "error"), lexptr);
 }

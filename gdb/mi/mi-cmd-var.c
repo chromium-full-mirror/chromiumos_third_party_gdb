@@ -1,7 +1,6 @@
 /* MI Command Set - varobj commands.
-
-   Copyright (C) 2000, 2002, 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000, 2002, 2004-2005, 2007-2012 Free Software
+   Foundation, Inc.
 
    Contributed by Cygnus Solutions (a Red Hat company).
 
@@ -38,18 +37,21 @@ const char mi_all_values[] = "--all-values";
 extern int varobjdebug;		/* defined in varobj.c.  */
 
 static void varobj_update_one (struct varobj *var,
-			      enum print_values print_values,
-			      int explicit);
+			       enum print_values print_values,
+			       int explicit);
 
-static int mi_print_value_p (struct varobj *var, enum print_values print_values);
+static int mi_print_value_p (struct varobj *var,
+			     enum print_values print_values);
 
 /* Print variable object VAR.  The PRINT_VALUES parameter controls
    if the value should be printed.  The PRINT_EXPRESSION parameter
    controls if the expression should be printed.  */
+
 static void 
 print_varobj (struct varobj *var, enum print_values print_values,
 	      int print_expression)
 {
+  struct ui_out *uiout = current_uiout;
   char *type;
   int thread_id;
   char *display_hint;
@@ -97,6 +99,7 @@ print_varobj (struct varobj *var, enum print_values print_values,
 void
 mi_cmd_var_create (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   CORE_ADDR frameaddr = 0;
   struct varobj *var;
   char *name;
@@ -106,15 +109,11 @@ mi_cmd_var_create (char *command, char **argv, int argc)
   enum varobj_type var_type;
 
   if (argc != 3)
-    {
-      /* mi_error_message = xstrprintf ("mi_cmd_var_create: Usage:
-         ...."); return MI_CMD_ERROR; */
-      error (_("mi_cmd_var_create: Usage: NAME FRAME EXPRESSION."));
-    }
+    error (_("-var-create: Usage: NAME FRAME EXPRESSION."));
 
   name = xstrdup (argv[0]);
-  /* Add cleanup for name. Must be free_current_contents as
-     name can be reallocated */
+  /* Add cleanup for name. Must be free_current_contents as name can
+     be reallocated.  */
   old_cleanups = make_cleanup (free_current_contents, &name);
 
   frame = xstrdup (argv[1]);
@@ -129,7 +128,7 @@ mi_cmd_var_create (char *command, char **argv, int argc)
       name = varobj_gen_name ();
     }
   else if (!isalpha (*name))
-    error (_("mi_cmd_var_create: name of object must begin with a letter"));
+    error (_("-var-create: name of object must begin with a letter"));
 
   if (strcmp (frame, "*") == 0)
     var_type = USE_CURRENT_FRAME;
@@ -149,7 +148,7 @@ mi_cmd_var_create (char *command, char **argv, int argc)
   var = varobj_create (name, expr, frameaddr, var_type);
 
   if (var == NULL)
-    error (_("mi_cmd_var_create: unable to create variable object"));
+    error (_("-var-create: unable to create variable object"));
 
   print_varobj (var, PRINT_ALL_VALUES, 0 /* don't print expression */);
 
@@ -166,39 +165,41 @@ mi_cmd_var_delete (char *command, char **argv, int argc)
   int numdel;
   int children_only_p = 0;
   struct cleanup *old_cleanups;
+  struct ui_out *uiout = current_uiout;
 
   if (argc < 1 || argc > 2)
-    error (_("mi_cmd_var_delete: Usage: [-c] EXPRESSION."));
+    error (_("-var-delete: Usage: [-c] EXPRESSION."));
 
   name = xstrdup (argv[0]);
-  /* Add cleanup for name. Must be free_current_contents as
-     name can be reallocated */
+  /* Add cleanup for name. Must be free_current_contents as name can
+     be reallocated.  */
   old_cleanups = make_cleanup (free_current_contents, &name);
 
   /* If we have one single argument it cannot be '-c' or any string
-     starting with '-'. */
+     starting with '-'.  */
   if (argc == 1)
     {
       if (strcmp (name, "-c") == 0)
-	error (_("mi_cmd_var_delete: Missing required argument after '-c': variable object name"));
+	error (_("-var-delete: Missing required "
+		 "argument after '-c': variable object name"));
       if (*name == '-')
-	error (_("mi_cmd_var_delete: Illegal variable object name"));
+	error (_("-var-delete: Illegal variable object name"));
     }
 
   /* If we have 2 arguments they must be '-c' followed by a string
-     which would be the variable name. */
+     which would be the variable name.  */
   if (argc == 2)
     {
       if (strcmp (name, "-c") != 0)
-	error (_("mi_cmd_var_delete: Invalid option."));
+	error (_("-var-delete: Invalid option."));
       children_only_p = 1;
       do_cleanups (old_cleanups);
       name = xstrdup (argv[1]);
-      make_cleanup (free_current_contents, &name);
+      old_cleanups = make_cleanup (free_current_contents, &name);
     }
 
   /* If we didn't error out, now NAME contains the name of the
-     variable. */
+     variable.  */
 
   var = varobj_get_handle (name);
 
@@ -232,7 +233,8 @@ mi_parse_format (const char *arg)
 	return FORMAT_OCTAL;
     }
 
-  error (_("Must specify the format as: \"natural\", \"binary\", \"decimal\", \"hexadecimal\", or \"octal\""));
+  error (_("Must specify the format as: \"natural\", "
+	   "\"binary\", \"decimal\", \"hexadecimal\", or \"octal\""));
 }
 
 void
@@ -241,22 +243,23 @@ mi_cmd_var_set_format (char *command, char **argv, int argc)
   enum varobj_display_formats format;
   struct varobj *var;
   char *val;
+  struct ui_out *uiout = current_uiout;
 
   if (argc != 2)
-    error (_("mi_cmd_var_set_format: Usage: NAME FORMAT."));
+    error (_("-var-set-format: Usage: NAME FORMAT."));
 
-  /* Get varobj handle, if a valid var obj name was specified */
+  /* Get varobj handle, if a valid var obj name was specified.  */
   var = varobj_get_handle (argv[0]);
 
   format = mi_parse_format (argv[1]);
   
-  /* Set the format of VAR to given format */
+  /* Set the format of VAR to the given format.  */
   varobj_set_display_format (var, format);
 
-  /* Report the new current format */
+  /* Report the new current format.  */
   ui_out_field_string (uiout, "format", varobj_format_string[(int) format]);
  
-  /* Report the value in the new format */
+  /* Report the value in the new format.  */
   val = varobj_get_value (var);
   ui_out_field_string (uiout, "value", val);
   xfree (val);
@@ -268,12 +271,12 @@ mi_cmd_var_set_visualizer (char *command, char **argv, int argc)
   struct varobj *var;
 
   if (argc != 2)
-    error ("Usage: NAME VISUALIZER_FUNCTION.");
+    error (_("Usage: NAME VISUALIZER_FUNCTION."));
 
   var = varobj_get_handle (argv[0]);
 
   if (var == NULL)
-    error ("Variable object not found");
+    error (_("Variable object not found"));
 
   varobj_set_visualizer (var, argv[1]);
 }
@@ -298,39 +301,40 @@ mi_cmd_var_set_frozen (char *command, char **argv, int argc)
 
   varobj_set_frozen (var, frozen);
 
-  /* We don't automatically return the new value, or what varobjs got new
-     values during unfreezing.  If this information is required, client
-     should call -var-update explicitly.  */
+  /* We don't automatically return the new value, or what varobjs got
+     new values during unfreezing.  If this information is required,
+     client should call -var-update explicitly.  */
 }
-
 
 void
 mi_cmd_var_show_format (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   enum varobj_display_formats format;
   struct varobj *var;
 
   if (argc != 1)
-    error (_("mi_cmd_var_show_format: Usage: NAME."));
+    error (_("-var-show-format: Usage: NAME."));
 
-  /* Get varobj handle, if a valid var obj name was specified */
+  /* Get varobj handle, if a valid var obj name was specified.  */
   var = varobj_get_handle (argv[0]);
 
   format = varobj_get_display_format (var);
 
-  /* Report the current format */
+  /* Report the current format.  */
   ui_out_field_string (uiout, "format", varobj_format_string[(int) format]);
 }
 
 void
 mi_cmd_var_info_num_children (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   struct varobj *var;
 
   if (argc != 1)
-    error (_("mi_cmd_var_info_num_children: Usage: NAME."));
+    error (_("-var-info-num-children: Usage: NAME."));
 
-  /* Get varobj handle, if a valid var obj name was specified */
+  /* Get varobj handle, if a valid var obj name was specified.  */
   var = varobj_get_handle (argv[0]);
 
   ui_out_field_int (uiout, "numchild", varobj_get_num_children (var));
@@ -391,6 +395,7 @@ mi_print_value_p (struct varobj *var, enum print_values print_values)
 void
 mi_cmd_var_list_children (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   struct varobj *var;  
   VEC(varobj_p) *children;
   struct varobj *child;
@@ -400,9 +405,10 @@ mi_cmd_var_list_children (char *command, char **argv, int argc)
   char *display_hint;
 
   if (argc < 1 || argc > 4)
-    error (_("mi_cmd_var_list_children: Usage: [PRINT_VALUES] NAME [FROM TO]"));
+    error (_("-var-list-children: Usage: "
+	     "[PRINT_VALUES] NAME [FROM TO]"));
 
-  /* Get varobj handle, if a valid var obj name was specified */
+  /* Get varobj handle, if a valid var obj name was specified.  */
   if (argc == 1 || argc == 3)
     var = varobj_get_handle (argv[0]);
   else
@@ -462,12 +468,13 @@ mi_cmd_var_list_children (char *command, char **argv, int argc)
 void
 mi_cmd_var_info_type (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   struct varobj *var;
 
   if (argc != 1)
-    error (_("mi_cmd_var_info_type: Usage: NAME."));
+    error (_("-var-info-type: Usage: NAME."));
 
-  /* Get varobj handle, if a valid var obj name was specified */
+  /* Get varobj handle, if a valid var obj name was specified.  */
   var = varobj_get_handle (argv[0]);
 
   ui_out_field_string (uiout, "type", varobj_get_type (var));
@@ -476,6 +483,7 @@ mi_cmd_var_info_type (char *command, char **argv, int argc)
 void
 mi_cmd_var_info_path_expression (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   struct varobj *var;
   char *path_expr;
 
@@ -493,13 +501,14 @@ mi_cmd_var_info_path_expression (char *command, char **argv, int argc)
 void
 mi_cmd_var_info_expression (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   enum varobj_languages lang;
   struct varobj *var;
 
   if (argc != 1)
-    error (_("mi_cmd_var_info_expression: Usage: NAME."));
+    error (_("-var-info-expression: Usage: NAME."));
 
-  /* Get varobj handle, if a valid var obj name was specified */
+  /* Get varobj handle, if a valid var obj name was specified.  */
   var = varobj_get_handle (argv[0]);
 
   lang = varobj_get_language (var);
@@ -511,12 +520,13 @@ mi_cmd_var_info_expression (char *command, char **argv, int argc)
 void
 mi_cmd_var_show_attributes (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   int attr;
   char *attstr;
   struct varobj *var;
 
   if (argc != 1)
-    error (_("mi_cmd_var_show_attributes: Usage: NAME."));
+    error (_("-var-show-attributes: Usage: NAME."));
 
   /* Get varobj handle, if a valid var obj name was specified */
   var = varobj_get_handle (argv[0]);
@@ -534,54 +544,55 @@ mi_cmd_var_show_attributes (char *command, char **argv, int argc)
 void
 mi_cmd_var_evaluate_expression (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   struct varobj *var;
 
   enum varobj_display_formats format;
   int formatFound;
-  int optind;
-  char *optarg;
+  int oind;
+  char *oarg;
     
   enum opt
-    {
-      OP_FORMAT
-    };
-  static struct mi_opt opts[] =
   {
-    {"f", OP_FORMAT, 1},
-    { 0, 0, 0 }
+    OP_FORMAT
   };
+  static const struct mi_opt opts[] =
+    {
+      {"f", OP_FORMAT, 1},
+      { 0, 0, 0 }
+    };
 
-  /* Parse arguments */
+  /* Parse arguments.  */
   format = FORMAT_NATURAL;
   formatFound = 0;
-  optind = 0;
+  oind = 0;
   while (1)
     {
       int opt = mi_getopt ("-var-evaluate-expression", argc, argv,
-			   opts, &optind, &optarg);
+			   opts, &oind, &oarg);
 
       if (opt < 0)
 	break;
       switch ((enum opt) opt)
-      {
+	{
 	case OP_FORMAT:
 	  if (formatFound)
 	    error (_("Cannot specify format more than once"));
    
-	  format = mi_parse_format (optarg);
+	  format = mi_parse_format (oarg);
 	  formatFound = 1;
 	  break;
-      }
+	}
     }
 
-  if (optind >= argc)
+  if (oind >= argc)
     error (_("Usage: [-f FORMAT] NAME"));
    
-  if (optind < argc - 1)
+  if (oind < argc - 1)
     error (_("Garbage at end of command"));
  
-     /* Get varobj handle, if a valid var obj name was specified */
-  var = varobj_get_handle (argv[optind]);
+  /* Get varobj handle, if a valid var obj name was specified.  */
+  var = varobj_get_handle (argv[oind]);
    
   if (formatFound)
     {
@@ -602,22 +613,24 @@ mi_cmd_var_evaluate_expression (char *command, char **argv, int argc)
 void
 mi_cmd_var_assign (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   struct varobj *var;
   char *expression, *val;
 
   if (argc != 2)
-    error (_("mi_cmd_var_assign: Usage: NAME EXPRESSION."));
+    error (_("-var-assign: Usage: NAME EXPRESSION."));
 
-  /* Get varobj handle, if a valid var obj name was specified */
+  /* Get varobj handle, if a valid var obj name was specified.  */
   var = varobj_get_handle (argv[0]);
 
   if (!varobj_editable_p (var))
-    error (_("mi_cmd_var_assign: Variable object is not editable"));
+    error (_("-var-assign: Variable object is not editable"));
 
   expression = xstrdup (argv[1]);
 
   if (!varobj_set_value (var, expression))
-    error (_("mi_cmd_var_assign: Could not assign expression to variable object"));
+    error (_("-var-assign: Could not assign "
+	     "expression to variable object"));
 
   val = varobj_get_value (var);
   ui_out_field_string (uiout, "value", val);
@@ -654,25 +667,26 @@ mi_cmd_var_update_iter (struct varobj *var, void *data_pointer)
 	thread_stopped = 1;
     }
 
-  if (thread_stopped)
-    if (!data->only_floating || varobj_floating_p (var))
-      varobj_update_one (var, data->print_values, 0 /* implicit */);
+  if (thread_stopped
+      && (!data->only_floating || varobj_floating_p (var)))
+    varobj_update_one (var, data->print_values, 0 /* implicit */);
 }
 
 void
 mi_cmd_var_update (char *command, char **argv, int argc)
 {
+  struct ui_out *uiout = current_uiout;
   struct cleanup *cleanup;
   char *name;
   enum print_values print_values;
 
   if (argc != 1 && argc != 2)
-    error (_("mi_cmd_var_update: Usage: [PRINT_VALUES] NAME."));
+    error (_("-var-update: Usage: [PRINT_VALUES] NAME."));
 
   if (argc == 1)
     name = argv[0];
   else
-    name = (argv[1]);
+    name = argv[1];
 
   if (argc == 2)
     print_values = mi_parse_values_option (argv[0]);
@@ -684,25 +698,25 @@ mi_cmd_var_update (char *command, char **argv, int argc)
   else
     cleanup = make_cleanup_ui_out_list_begin_end (uiout, "changelist");
 
-  /* Check if the parameter is a "*" which means that we want
-     to update all variables */
+  /* Check if the parameter is a "*", which means that we want to
+     update all variables.  */
 
   if ((*name == '*' || *name == '@') && (*(name + 1) == '\0'))
     {
       struct mi_cmd_var_update data;
 
-      data.only_floating = *name == '@';
+      data.only_floating = (*name == '@');
       data.print_values = print_values;
 
-      /* varobj_update_one automatically updates all the children of VAROBJ.
-	 Therefore update each VAROBJ only once by iterating only the root
-	 VAROBJs.  */
+      /* varobj_update_one automatically updates all the children of
+	 VAROBJ.  Therefore update each VAROBJ only once by iterating
+	 only the root VAROBJs.  */
 
       all_root_varobjs (mi_cmd_var_update_iter, &data);
     }
   else
     {
-      /* Get varobj handle, if a valid var obj name was specified */
+      /* Get varobj handle, if a valid var obj name was specified.  */
       struct varobj *var = varobj_get_handle (name);
 
       varobj_update_one (var, print_values, 1 /* explicit */);
@@ -717,6 +731,7 @@ static void
 varobj_update_one (struct varobj *var, enum print_values print_values,
 		   int explicit)
 {
+  struct ui_out *uiout = current_uiout;
   struct cleanup *cleanup = NULL;
   VEC (varobj_update_result) *changes;
   varobj_update_result *r;
@@ -793,7 +808,8 @@ varobj_update_one (struct varobj *var, enum print_values print_values,
 	    {
 	      struct cleanup *cleanup_child;
 
-	      cleanup_child = make_cleanup_ui_out_tuple_begin_end (uiout, NULL);
+	      cleanup_child
+		= make_cleanup_ui_out_tuple_begin_end (uiout, NULL);
 	      print_varobj (child, print_values, 1 /* print_expression */);
 	      do_cleanups (cleanup_child);
 	    }
@@ -813,7 +829,8 @@ void
 mi_cmd_enable_pretty_printing (char *command, char **argv, int argc)
 {
   if (argc != 0)
-    error (_("mi_cmd_enable_pretty_printing: no arguments allowed"));
+    error (_("-enable-pretty-printing: no arguments allowed"));
+
   varobj_enable_pretty_printing ();
 }
 
@@ -824,7 +841,7 @@ mi_cmd_var_set_update_range (char *command, char **argv, int argc)
   int from, to;
 
   if (argc != 3)
-    error (_("mi_cmd_var_set_update_range: Usage: VAROBJ FROM TO"));
+    error (_("-var-set-update-range: Usage: VAROBJ FROM TO"));
   
   var = varobj_get_handle (argv[0]);
   from = atoi (argv[1]);

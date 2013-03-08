@@ -1,7 +1,6 @@
 /* Target-dependent code for Solaris SPARC.
 
-   Copyright (C) 2003, 2004, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2004, 2006-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -57,7 +56,7 @@ const struct sparc_gregset sparc32_sol2_gregset =
    `ucontext_t', which has a member `uc_mcontext' that contains the
    saved registers.  Incidentally, the kernel passes the `ucontext_t'
    pointer as the third argument of the signal trampoline too, and
-   `sigacthandler' simply passes it on. However, if you link your
+   `sigacthandler' simply passes it on.  However, if you link your
    program with "-L/usr/ucblib -R/usr/ucblib -lucb", the function
    `ucbsigvechandler' will be used, which invokes the using the BSD
    convention, where the third argument is a pointer to an instance of
@@ -67,7 +66,7 @@ const struct sparc_gregset sparc32_sol2_gregset =
    ignore this.  */
 
 int
-sparc_sol2_pc_in_sigtramp (CORE_ADDR pc, char *name)
+sparc_sol2_pc_in_sigtramp (CORE_ADDR pc, const char *name)
 {
   return (name && (strcmp (name, "sigacthandler") == 0
 		   || strcmp (name, "ucbsigvechandler") == 0
@@ -93,7 +92,8 @@ sparc32_sol2_sigtramp_frame_cache (struct frame_info *this_frame,
   /* The third argument is a pointer to an instance of `ucontext_t',
      which has a member `uc_mcontext' that contains the saved
      registers.  */
-  regnum = (cache->frameless_p ? SPARC_O2_REGNUM : SPARC_I2_REGNUM);
+  regnum =
+    (cache->copied_regs_mask & 0x04) ? SPARC_I2_REGNUM : SPARC_O2_REGNUM;
   mcontext_addr = get_frame_register_unsigned (this_frame, regnum) + 40;
 
   cache->saved_regs[SPARC32_PSR_REGNUM].addr = mcontext_addr + 0 * 4;
@@ -152,7 +152,7 @@ sparc32_sol2_sigtramp_frame_sniffer (const struct frame_unwind *self,
 				     void **this_cache)
 {
   CORE_ADDR pc = get_frame_pc (this_frame);
-  char *name;
+  const char *name;
 
   find_pc_partial_function (pc, &name, NULL, NULL);
   if (sparc_sol2_pc_in_sigtramp (pc, name))
@@ -164,6 +164,7 @@ sparc32_sol2_sigtramp_frame_sniffer (const struct frame_unwind *self,
 static const struct frame_unwind sparc32_sol2_sigtramp_frame_unwind =
 {
   SIGTRAMP_FRAME,
+  default_frame_unwind_stop_reason,
   sparc32_sol2_sigtramp_frame_this_id,
   sparc32_sol2_sigtramp_frame_prev_register,
   NULL,
@@ -172,8 +173,8 @@ static const struct frame_unwind sparc32_sol2_sigtramp_frame_unwind =
 
 /* Unglobalize NAME.  */
 
-char *
-sparc_sol2_static_transform_name (char *name)
+const const char *
+sparc_sol2_static_transform_name (const char *name)
 {
   /* The Sun compilers (Sun ONE Studio, Forte Developer, Sun WorkShop,
      SunPRO) convert file static variables into global values, a
@@ -231,10 +232,6 @@ sparc32_sol2_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   set_gdbarch_software_single_step (gdbarch, NULL);
 
   frame_unwind_append_unwinder (gdbarch, &sparc32_sol2_sigtramp_frame_unwind);
-
-  /* Solaris encodes the pid of the inferior in regset section
-     names.  */
-  set_gdbarch_core_reg_section_encodes_pid (gdbarch, 1);
 
   /* How to print LWP PTIDs from core files.  */
   set_gdbarch_core_pid_to_str (gdbarch, sol2_core_pid_to_str);

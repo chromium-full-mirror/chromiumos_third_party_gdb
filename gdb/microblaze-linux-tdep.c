@@ -1,6 +1,6 @@
 /* Target-dependent code for Xilinx MicroBlaze.
 
-   Copyright 2009, 2010 Free Software Foundation, Inc.
+   Copyright 2009-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -35,7 +35,7 @@
 #include "trad-frame.h"
 #include "frame-unwind.h"
 #include "tramp-frame.h"
-
+#include "linux-tdep.h"
 
 static int
 microblaze_linux_memory_remove_breakpoint (struct gdbarch *gdbarch, 
@@ -58,7 +58,7 @@ microblaze_linux_memory_remove_breakpoint (struct gdbarch *gdbarch,
      program modified the code on us, so it is wrong to put back the
      old value.  */
   if (val == 0 && memcmp (bp, old_contents, bplen) == 0)
-    val = target_write_memory (addr, bp_tgt->shadow_contents, bplen);
+    val = target_write_raw_memory (addr, bp_tgt->shadow_contents, bplen);
 
   return val;
 }
@@ -123,6 +123,8 @@ microblaze_linux_init_abi (struct gdbarch_info info,
 {
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
 
+  linux_init_abi (info, gdbarch);
+
   set_gdbarch_memory_remove_breakpoint (gdbarch,
 					microblaze_linux_memory_remove_breakpoint);
 
@@ -134,6 +136,9 @@ microblaze_linux_init_abi (struct gdbarch_info info,
   tramp_frame_prepend_unwinder (gdbarch,
 				&microblaze_linux_sighandler_tramp_frame);
 }
+
+/* -Wmissing-prototypes */
+extern initialize_file_ftype _initialize_microblaze_linux_tdep;
 
 void
 _initialize_microblaze_linux_tdep (void)

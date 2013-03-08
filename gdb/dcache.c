@@ -1,7 +1,7 @@
 /* Caching code for GDB, the GNU debugger.
 
-   Copyright (C) 1992, 1993, 1995, 1996, 1998, 1999, 2000, 2001, 2003, 2007,
-   2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1992-1993, 1995-1996, 1998-2001, 2003, 2007-2012 Free
+   Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -93,7 +93,7 @@ static unsigned dcache_line_size = DCACHE_DEFAULT_LINE_SIZE;
 
 struct dcache_block
 {
-  /* for least-recently-allocated and free lists */
+  /* For least-recently-allocated and free lists.  */
   struct dcache_block *prev;
   struct dcache_block *next;
 
@@ -105,7 +105,7 @@ struct dcache_block
 struct dcache_struct
 {
   splay_tree tree;
-  struct dcache_block *oldest; /* least-recently-allocated list */
+  struct dcache_block *oldest; /* least-recently-allocated list.  */
 
   /* The free list is maintained identically to OLDEST to simplify
      the code: we only need one set of accessors.  */
@@ -140,7 +140,7 @@ show_dcache_enabled_p (struct ui_file *file, int from_tty,
   fprintf_filtered (file, _("Deprecated remotecache flag is %s.\n"), value);
 }
 
-static DCACHE *last_cache; /* Used by info dcache */
+static DCACHE *last_cache; /* Used by info dcache.  */
 
 /* Add BLOCK to circular block list BLIST, behind the block at *BLIST.
    *BLIST is not updated (unless it was previously NULL of course).
@@ -663,7 +663,6 @@ set_dcache_size (char *args, int from_tty,
 {
   if (dcache_size == 0)
     {
-      unsigned d = dcache_size;
       dcache_size = DCACHE_DEFAULT_SIZE;
       error (_("Dcache size must be greater than 0."));
     }

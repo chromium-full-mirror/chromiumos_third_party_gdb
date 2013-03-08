@@ -1,7 +1,7 @@
 /* Declarations for value printing routines for GDB, the GNU debugger.
 
-   Copyright (C) 1986, 1988, 1989, 1991, 1992, 1993, 1994, 2000, 2005, 2007,
-   2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1986, 1988-1989, 1991-1994, 2000, 2005, 2007-2012 Free
+   Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -50,7 +50,7 @@ struct value_print_options
   /* Maximum number of chars to print for a string pointer value or vector
      contents, or UINT_MAX for no limit.  Note that "set print elements 0"
      stores UINT_MAX in print_max, which displays in a show command as
-     "unlimited". */
+     "unlimited".  */
   unsigned int print_max;
 
   /* Print repeat counts if there are more than this many repetitions
@@ -90,6 +90,10 @@ struct value_print_options
 
   /* If nonzero, print the value in "summary" form.  */
   int summary;
+
+  /* If nonzero, when printing a pointer, print the symbol to which it
+     points, if any.  */
+  int symbol_print;
 };
 
 /* The global print options set by the user.  In general this should
@@ -109,14 +113,11 @@ extern void get_raw_print_options (struct value_print_options *opts);
 extern void get_formatted_print_options (struct value_print_options *opts,
 					 char format);
 
-extern int get_array_bounds (struct type *type, LONGEST *low_bound,
-			     LONGEST *high_bound);
-
 extern void maybe_print_array_index (struct type *index_type, LONGEST index,
                                      struct ui_file *stream,
-				     const struct value_print_options *options);
+				     const struct value_print_options *);
 
-extern void val_print_array_elements (struct type *, const gdb_byte *,
+extern void val_print_array_elements (struct type *, const gdb_byte *, int,
 				      CORE_ADDR, struct ui_file *, int,
 				      const struct value *,
 				      const struct value_print_options *,
@@ -128,6 +129,13 @@ extern void val_print_type_code_int (struct type *, const gdb_byte *,
 extern void val_print_type_code_flags (struct type *type,
 				       const gdb_byte *valaddr,
 				       struct ui_file *stream);
+
+extern void val_print_scalar_formatted (struct type *,
+					const gdb_byte *, int,
+					const struct value *,
+					const struct value_print_options *,
+					int,
+					struct ui_file *);
 
 extern void print_binary_chars (struct ui_file *, const gdb_byte *,
 				unsigned int, enum bfd_endian);
@@ -144,8 +152,58 @@ extern void print_hex_chars (struct ui_file *, const gdb_byte *,
 extern void print_char_chars (struct ui_file *, struct type *,
 			      const gdb_byte *, unsigned int, enum bfd_endian);
 
+extern void print_function_pointer_address (const struct value_print_options *options,
+					    struct gdbarch *gdbarch,
+					    CORE_ADDR address,
+					    struct ui_file *stream);
+
 int read_string (CORE_ADDR addr, int len, int width, unsigned int fetchlimit,
 		 enum bfd_endian byte_order, gdb_byte **buffer,
 		 int *bytes_read);
+
+extern void val_print_optimized_out (struct ui_file *stream);
+
+extern void val_print_unavailable (struct ui_file *stream);
+
+extern void val_print_invalid_address (struct ui_file *stream);
+
+/* An instance of this is passed to generic_val_print and describes
+   some language-specific ways to print things.  */
+
+struct generic_val_print_decorations
+{
+  /* Printing complex numbers: what to print before, between the
+     elements, and after.  */
+
+  const char *complex_prefix;
+  const char *complex_infix;
+  const char *complex_suffix;
+
+  /* Boolean true and false.  */
+
+  const char *true_name;
+  const char *false_name;
+
+  /* What to print when we see TYPE_CODE_VOID.  */
+
+  const char *void_name;
+};
+
+
+extern void generic_val_print (struct type *type, const gdb_byte *valaddr,
+			       int embedded_offset, CORE_ADDR address,
+			       struct ui_file *stream, int recurse,
+			       const struct value *original_value,
+			       const struct value_print_options *options,
+			       const struct generic_val_print_decorations *);
+
+extern void generic_emit_char (int c, struct type *type, struct ui_file *stream,
+			       int quoter, const char *encoding);
+
+extern void generic_printstr (struct ui_file *stream, struct type *type, 
+			      const gdb_byte *string, unsigned int length, 
+			      const char *encoding, int force_ellipses,
+			      int quote_char, int c_style_terminator,
+			      const struct value_print_options *options);
 
 #endif

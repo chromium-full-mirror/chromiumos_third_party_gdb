@@ -1,7 +1,6 @@
 /* GNU/Linux on ARM target support.
 
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-   2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1999-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -33,6 +32,7 @@
 #include "trad-frame.h"
 #include "tramp-frame.h"
 #include "breakpoint.h"
+#include "auxv.h"
 
 #include "arm-tdep.h"
 #include "arm-linux-tdep.h"
@@ -43,7 +43,16 @@
 #include "gdbthread.h"
 #include "symfile.h"
 
+#include "cli/cli-utils.h"
+#include "stap-probe.h"
+#include "parser-defs.h"
+#include "user-regs.h"
+#include <ctype.h>
+
 #include "gdb_string.h"
+
+/* This is defined in <elf.h> on ARM GNU/Linux systems.  */
+#define AT_HWCAP        16
 
 extern int arm_apcs_32;
 
@@ -105,7 +114,7 @@ static const char arm_linux_thumb2_le_breakpoint[] = { 0xf0, 0xf7, 0x00, 0xa0 };
    GOT = global offset table
 
    As much as possible, ELF dynamic linking defers the resolution of
-   jump/call addresses until the last minute. The technique used is
+   jump/call addresses until the last minute.  The technique used is
    inspired by the i386 ELF design, and is based on the following
    constraints.
 
@@ -147,9 +156,9 @@ static const char arm_linux_thumb2_le_breakpoint[] = { 0xf0, 0xf7, 0x00, 0xa0 };
 
    2) In the PLT:
 
-   The PLT is a synthetic area, created by the linker. It exists in
-   both executables and libraries. It is an array of stubs, one per
-   imported function call. It looks like this:
+   The PLT is a synthetic area, created by the linker.  It exists in
+   both executables and libraries.  It is an array of stubs, one per
+   imported function call.  It looks like this:
 
    PLT[0]:
    str     lr, [sp, #-4]!       @push the return address (lr)
@@ -171,7 +180,7 @@ static const char arm_linux_thumb2_le_breakpoint[] = { 0xf0, 0xf7, 0x00, 0xa0 };
    lr = &GOT[0] + 8
    = &GOT[2]
 
-   NOTE: PLT[0] borrows an offset .word from PLT[1]. This is a little
+   NOTE: PLT[0] borrows an offset .word from PLT[1].  This is a little
    "tight", but allows us to keep all the PLT entries the same size.
 
    PLT[n+1]:
@@ -188,12 +197,12 @@ static const char arm_linux_thumb2_le_breakpoint[] = { 0xf0, 0xf7, 0x00, 0xa0 };
    3) In the GOT:
 
    The GOT contains helper pointers for both code (PLT) fixups and
-   data fixups.  The first 3 entries of the GOT are special. The next
+   data fixups.  The first 3 entries of the GOT are special.  The next
    M entries (where M is the number of entries in the PLT) belong to
-   the PLT fixups. The next D (all remaining) entries belong to
-   various data fixups. The actual size of the GOT is 3 + M + D.
+   the PLT fixups.  The next D (all remaining) entries belong to
+   various data fixups.  The actual size of the GOT is 3 + M + D.
 
-   The GOT is also a synthetic area, created by the linker. It exists
+   The GOT is also a synthetic area, created by the linker.  It exists
    in both executables and libraries.  When the GOT is first
    initialized , all the GOT entries relating to PLT fixups are
    pointing to code back at PLT[0].
@@ -239,6 +248,7 @@ static const char arm_linux_thumb2_le_breakpoint[] = { 0xf0, 0xf7, 0x00, 0xa0 };
    whenever OABI support has been enabled in the kernel.  */
 #define ARM_OABI_SYSCALL_RESTART_SYSCALL 0xef900000
 #define ARM_LDR_PC_SP_12		0xe49df00c
+#define ARM_LDR_PC_SP_4			0xe49df004
 
 static void
 arm_linux_sigtramp_cache (struct frame_info *this_frame,
@@ -355,10 +365,36 @@ arm_linux_restart_syscall_init (const struct tramp_frame *self,
 				struct trad_frame_cache *this_cache,
 				CORE_ADDR func)
 {
+  struct gdbarch *gdbarch = get_frame_arch (this_frame);
   CORE_ADDR sp = get_frame_register_unsigned (this_frame, ARM_SP_REGNUM);
+  CORE_ADDR pc = get_frame_memory_unsigned (this_frame, sp, 4);
+  CORE_ADDR cpsr = get_frame_register_unsigned (this_frame, ARM_PS_REGNUM);
+  ULONGEST t_bit = arm_psr_thumb_bit (gdbarch);
+  int sp_offset;
 
-  trad_frame_set_reg_addr (this_cache, ARM_PC_REGNUM, sp);
-  trad_frame_set_reg_value (this_cache, ARM_SP_REGNUM, sp + 12);
+  /* There are two variants of this trampoline; with older kernels, the
+     stub is placed on the stack, while newer kernels use the stub from
+     the vector page.  They are identical except that the older version
+     increments SP by 12 (to skip stored PC and the stub itself), while
+     the newer version increments SP only by 4 (just the stored PC).  */
+  if (self->insn[1].bytes == ARM_LDR_PC_SP_4)
+    sp_offset = 4;
+  else
+    sp_offset = 12;
+
+  /* Update Thumb bit in CPSR.  */
+  if (pc & 1)
+    cpsr |= t_bit;
+  else
+    cpsr &= ~t_bit;
+
+  /* Remove Thumb bit from PC.  */
+  pc = gdbarch_addr_bits_remove (gdbarch, pc);
+
+  /* Save previous register values.  */
+  trad_frame_set_reg_value (this_cache, ARM_SP_REGNUM, sp + sp_offset);
+  trad_frame_set_reg_value (this_cache, ARM_PC_REGNUM, pc);
+  trad_frame_set_reg_value (this_cache, ARM_PS_REGNUM, cpsr);
 
   /* Save a frame ID.  */
   trad_frame_set_id (this_cache, frame_id_build (sp, func));
@@ -412,6 +448,17 @@ static struct tramp_frame arm_linux_restart_syscall_tramp_frame = {
   {
     { ARM_OABI_SYSCALL_RESTART_SYSCALL, -1 },
     { ARM_LDR_PC_SP_12, -1 },
+    { TRAMP_SENTINEL_INSN }
+  },
+  arm_linux_restart_syscall_init
+};
+
+static struct tramp_frame arm_kernel_linux_restart_syscall_tramp_frame = {
+  NORMAL_FRAME,
+  4,
+  {
+    { ARM_OABI_SYSCALL_RESTART_SYSCALL, -1 },
+    { ARM_LDR_PC_SP_4, -1 },
     { TRAMP_SENTINEL_INSN }
   },
   arm_linux_restart_syscall_init
@@ -600,6 +647,44 @@ arm_linux_collect_nwfpe (const struct regset *regset,
 			  regs + INT_REGISTER_SIZE * ARM_FPS_REGNUM);
 }
 
+/* Support VFP register format.  */
+
+#define ARM_LINUX_SIZEOF_VFP (32 * 8 + 4)
+
+static void
+arm_linux_supply_vfp (const struct regset *regset,
+		      struct regcache *regcache,
+		      int regnum, const void *regs_buf, size_t len)
+{
+  const gdb_byte *regs = regs_buf;
+  int regno;
+
+  if (regnum == ARM_FPSCR_REGNUM || regnum == -1)
+    regcache_raw_supply (regcache, ARM_FPSCR_REGNUM, regs + 32 * 8);
+
+  for (regno = ARM_D0_REGNUM; regno <= ARM_D31_REGNUM; regno++)
+    if (regnum == -1 || regnum == regno)
+      regcache_raw_supply (regcache, regno,
+			   regs + (regno - ARM_D0_REGNUM) * 8);
+}
+
+static void
+arm_linux_collect_vfp (const struct regset *regset,
+			 const struct regcache *regcache,
+			 int regnum, void *regs_buf, size_t len)
+{
+  gdb_byte *regs = regs_buf;
+  int regno;
+
+  if (regnum == ARM_FPSCR_REGNUM || regnum == -1)
+    regcache_raw_collect (regcache, ARM_FPSCR_REGNUM, regs + 32 * 8);
+
+  for (regno = ARM_D0_REGNUM; regno <= ARM_D31_REGNUM; regno++)
+    if (regnum == -1 || regnum == regno)
+      regcache_raw_collect (regcache, regno,
+			    regs + (regno - ARM_D0_REGNUM) * 8);
+}
+
 /* Return the appropriate register set for the core section identified
    by SECT_NAME and SECT_SIZE.  */
 
@@ -627,8 +712,61 @@ arm_linux_regset_from_core_section (struct gdbarch *gdbarch,
       return tdep->fpregset;
     }
 
+  if (strcmp (sect_name, ".reg-arm-vfp") == 0
+      && sect_size == ARM_LINUX_SIZEOF_VFP)
+    {
+      if (tdep->vfpregset == NULL)
+        tdep->vfpregset = regset_alloc (gdbarch, arm_linux_supply_vfp,
+					arm_linux_collect_vfp);
+      return tdep->vfpregset;
+    }
+
   return NULL;
 }
+
+/* Core file register set sections.  */
+
+static struct core_regset_section arm_linux_fpa_regset_sections[] =
+{
+  { ".reg", ARM_LINUX_SIZEOF_GREGSET, "general-purpose" },
+  { ".reg2", ARM_LINUX_SIZEOF_NWFPE, "FPA floating-point" },
+  { NULL, 0}
+};
+
+static struct core_regset_section arm_linux_vfp_regset_sections[] =
+{
+  { ".reg", ARM_LINUX_SIZEOF_GREGSET, "general-purpose" },
+  { ".reg-arm-vfp", ARM_LINUX_SIZEOF_VFP, "VFP floating-point" },
+  { NULL, 0}
+};
+
+/* Determine target description from core file.  */
+
+static const struct target_desc *
+arm_linux_core_read_description (struct gdbarch *gdbarch,
+                                 struct target_ops *target,
+                                 bfd *abfd)
+{
+  CORE_ADDR arm_hwcap = 0;
+
+  if (target_auxv_search (target, AT_HWCAP, &arm_hwcap) != 1)
+    return NULL;
+
+  if (arm_hwcap & HWCAP_VFP)
+    {
+      /* NEON implies VFPv3-D32 or no-VFP unit.  Say that we only support
+         Neon with VFPv3-D32.  */
+      if (arm_hwcap & HWCAP_NEON)
+	return tdesc_arm_with_neon;
+      else if ((arm_hwcap & (HWCAP_VFPv3 | HWCAP_VFPv3D16)) == HWCAP_VFPv3)
+	return tdesc_arm_with_vfpv3;
+      else
+	return tdesc_arm_with_vfpv2;
+    }
+
+  return NULL;
+}
+
 
 /* Copy the value of next pc of sigreturn and rt_sigrturn into PC,
    return 1.  In addition, set IS_THUMB depending on whether we
@@ -710,7 +848,12 @@ arm_linux_software_single_step (struct frame_info *frame)
 {
   struct gdbarch *gdbarch = get_frame_arch (frame);
   struct address_space *aspace = get_frame_address_space (frame);
-  CORE_ADDR next_pc = arm_get_next_pc (frame, get_frame_pc (frame));
+  CORE_ADDR next_pc;
+
+  if (arm_deal_with_atomic_sequence (frame))
+    return 1;
+
+  next_pc = arm_get_next_pc (frame, get_frame_pc (frame));
 
   /* The Linux kernel offers some user-mode helpers in a high page.  We can
      not read this page (as of 2.6.23), and even if we could then we couldn't
@@ -757,20 +900,15 @@ arm_linux_cleanup_svc (struct gdbarch *gdbarch,
 }
 
 static int
-arm_linux_copy_svc (struct gdbarch *gdbarch, uint32_t insn, CORE_ADDR to,
-		    struct regcache *regs, struct displaced_step_closure *dsc)
+arm_linux_copy_svc (struct gdbarch *gdbarch, struct regcache *regs,
+		    struct displaced_step_closure *dsc)
 {
-  CORE_ADDR from = dsc->insn_addr;
   CORE_ADDR return_to = 0;
 
   struct frame_info *frame;
-  unsigned int svc_number = displaced_read_reg (regs, from, 7);
+  unsigned int svc_number = displaced_read_reg (regs, dsc, 7);
   int is_sigreturn = 0;
   int is_thumb;
-
-  if (debug_displaced)
-    fprintf_unfiltered (gdb_stdlog, "displaced: copying Linux svc insn %.8lx\n",
-			(unsigned long) insn);
 
   frame = get_current_frame ();
 
@@ -782,14 +920,15 @@ arm_linux_copy_svc (struct gdbarch *gdbarch, uint32_t insn, CORE_ADDR to,
 
 	  if (debug_displaced)
 	    fprintf_unfiltered (gdb_stdlog, "displaced: found "
-	      "sigreturn/rt_sigreturn SVC call. PC in frame = %lx\n",
+	      "sigreturn/rt_sigreturn SVC call.  PC in frame = %lx\n",
 	      (unsigned long) get_frame_pc (frame));
 
 	  if (debug_displaced)
-	    fprintf_unfiltered (gdb_stdlog, "displaced: unwind pc = %lx. "
+	    fprintf_unfiltered (gdb_stdlog, "displaced: unwind pc = %lx.  "
 	      "Setting momentary breakpoint.\n", (unsigned long) return_to);
 
-	  gdb_assert (inferior_thread ()->step_resume_breakpoint == NULL);
+	  gdb_assert (inferior_thread ()->control.step_resume_breakpoint
+		      == NULL);
 
 	  sal = find_pc_line (return_to, 0);
 	  sal.pc = return_to;
@@ -800,9 +939,12 @@ arm_linux_copy_svc (struct gdbarch *gdbarch, uint32_t insn, CORE_ADDR to,
 
 	  if (frame)
 	    {
-	      inferior_thread ()->step_resume_breakpoint
+	      inferior_thread ()->control.step_resume_breakpoint
         	= set_momentary_breakpoint (gdbarch, sal, get_frame_id (frame),
 					    bp_step_resume);
+
+	      /* set_momentary_breakpoint invalidates FRAME.  */
+	      frame = NULL;
 
 	      /* We need to make sure we actually insert the momentary
 	         breakpoint set above.  */
@@ -824,7 +966,6 @@ arm_linux_copy_svc (struct gdbarch *gdbarch, uint32_t insn, CORE_ADDR to,
      Cleanup: if pc lands in scratch space, pc <- insn_addr + 4
               else leave pc alone.  */
 
-  dsc->modinsn[0] = insn;
 
   dsc->cleanup = &arm_linux_cleanup_svc;
   /* Pretend we wrote to the PC, so cleanup doesn't set PC to the next
@@ -877,7 +1018,7 @@ arm_catch_kernel_helper_return (struct gdbarch *gdbarch, CORE_ADDR from,
      Insn: ldr pc, [r14, #4]
      Cleanup: r14 <- tmp[0], pc <- tmp[0].  */
 
-  dsc->tmp[0] = displaced_read_reg (regs, from, ARM_LR_REGNUM);
+  dsc->tmp[0] = displaced_read_reg (regs, dsc, ARM_LR_REGNUM);
   displaced_write_reg (regs, dsc, ARM_LR_REGNUM, (ULONGEST) to + 4,
 		       CANNOT_WRITE_PC);
   write_memory_unsigned_integer (to + 8, 4, byte_order, from);
@@ -910,18 +1051,10 @@ arm_linux_displaced_step_copy_insn (struct gdbarch *gdbarch,
     }
   else
     {
-      enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
-      uint32_t insn = read_memory_unsigned_integer (from, 4, byte_order);
-
-      if (debug_displaced)
-	fprintf_unfiltered (gdb_stdlog, "displaced: stepping insn %.8lx "
-			    "at %.8lx\n", (unsigned long) insn,
-			    (unsigned long) from);
-
       /* Override the default handling of SVC instructions.  */
       dsc->u.svc.copy_svc_os = arm_linux_copy_svc;
 
-      arm_process_displaced_insn (gdbarch, insn, from, to, regs, dsc);
+      arm_process_displaced_insn (gdbarch, from, to, regs, dsc);
     }
 
   arm_displaced_init_closure (gdbarch, from, to, dsc);
@@ -929,11 +1062,129 @@ arm_linux_displaced_step_copy_insn (struct gdbarch *gdbarch,
   return dsc;
 }
 
+static int
+arm_stap_is_single_operand (struct gdbarch *gdbarch, const char *s)
+{
+  return (*s == '#' /* Literal number.  */
+	  || *s == '[' /* Register indirection or
+			  displacement.  */
+	  || isalpha (*s)); /* Register value.  */
+}
+
+/* This routine is used to parse a special token in ARM's assembly.
+
+   The special tokens parsed by it are:
+
+      - Register displacement (e.g, [fp, #-8])
+
+   It returns one if the special token has been parsed successfully,
+   or zero if the current token is not considered special.  */
+
+static int
+arm_stap_parse_special_token (struct gdbarch *gdbarch,
+			      struct stap_parse_info *p)
+{
+  if (*p->arg == '[')
+    {
+      /* Temporary holder for lookahead.  */
+      const char *tmp = p->arg;
+      /* Used to save the register name.  */
+      const char *start;
+      char *regname;
+      int len, offset;
+      int got_minus = 0;
+      long displacement;
+      struct stoken str;
+
+      ++tmp;
+      start = tmp;
+
+      /* Register name.  */
+      while (isalnum (*tmp))
+	++tmp;
+
+      if (*tmp != ',')
+	return 0;
+
+      len = tmp - start;
+      regname = alloca (len + 2);
+
+      offset = 0;
+      if (isdigit (*start))
+	{
+	  /* If we are dealing with a register whose name begins with a
+	     digit, it means we should prefix the name with the letter
+	     `r', because GDB expects this name pattern.  Otherwise (e.g.,
+	     we are dealing with the register `fp'), we don't need to
+	     add such a prefix.  */
+	  regname[0] = 'r';
+	  offset = 1;
+	}
+
+      strncpy (regname + offset, start, len);
+      len += offset;
+      regname[len] = '\0';
+
+      if (user_reg_map_name_to_regnum (gdbarch, regname, len) == -1)
+	error (_("Invalid register name `%s' on expression `%s'."),
+	       regname, p->saved_arg);
+
+      ++tmp;
+      tmp = skip_spaces_const (tmp);
+      if (*tmp++ != '#')
+	return 0;
+
+      if (*tmp == '-')
+	{
+	  ++tmp;
+	  got_minus = 1;
+	}
+
+      displacement = strtol (tmp, (char **) &tmp, 10);
+
+      /* Skipping last `]'.  */
+      if (*tmp++ != ']')
+	return 0;
+
+      /* The displacement.  */
+      write_exp_elt_opcode (OP_LONG);
+      write_exp_elt_type (builtin_type (gdbarch)->builtin_long);
+      write_exp_elt_longcst (displacement);
+      write_exp_elt_opcode (OP_LONG);
+      if (got_minus)
+	write_exp_elt_opcode (UNOP_NEG);
+
+      /* The register name.  */
+      write_exp_elt_opcode (OP_REGISTER);
+      str.ptr = regname;
+      str.length = len;
+      write_exp_string (str);
+      write_exp_elt_opcode (OP_REGISTER);
+
+      write_exp_elt_opcode (BINOP_ADD);
+
+      /* Casting to the expected type.  */
+      write_exp_elt_opcode (UNOP_CAST);
+      write_exp_elt_type (lookup_pointer_type (p->arg_type));
+      write_exp_elt_opcode (UNOP_CAST);
+
+      write_exp_elt_opcode (UNOP_IND);
+
+      p->arg = tmp;
+    }
+  else
+    return 0;
+
+  return 1;
+}
+
 static void
 arm_linux_init_abi (struct gdbarch_info info,
 		    struct gdbarch *gdbarch)
 {
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+
+  linux_init_abi (info, gdbarch);
 
   tdep->lowest_pc = 0x8000;
   if (info.byte_order == BFD_ENDIAN_BIG)
@@ -1003,10 +1254,18 @@ arm_linux_init_abi (struct gdbarch_info info,
 				&arm_eabi_linux_rt_sigreturn_tramp_frame);
   tramp_frame_prepend_unwinder (gdbarch,
 				&arm_linux_restart_syscall_tramp_frame);
+  tramp_frame_prepend_unwinder (gdbarch,
+				&arm_kernel_linux_restart_syscall_tramp_frame);
 
   /* Core file support.  */
   set_gdbarch_regset_from_core_section (gdbarch,
 					arm_linux_regset_from_core_section);
+  set_gdbarch_core_read_description (gdbarch, arm_linux_core_read_description);
+
+  if (tdep->have_vfp_registers)
+    set_gdbarch_core_regset_sections (gdbarch, arm_linux_vfp_regset_sections);
+  else if (tdep->have_fpa_registers)
+    set_gdbarch_core_regset_sections (gdbarch, arm_linux_fpa_regset_sections);
 
   set_gdbarch_get_siginfo_type (gdbarch, linux_get_siginfo_type);
 
@@ -1018,8 +1277,23 @@ arm_linux_init_abi (struct gdbarch_info info,
 					   simple_displaced_step_free_closure);
   set_gdbarch_displaced_step_location (gdbarch, displaced_step_at_entry_point);
 
+  /* Reversible debugging, process record.  */
+  set_gdbarch_process_record (gdbarch, arm_process_record);
+
+  /* SystemTap functions.  */
+  set_gdbarch_stap_integer_prefix (gdbarch, "#");
+  set_gdbarch_stap_register_prefix (gdbarch, "r");
+  set_gdbarch_stap_register_indirection_prefix (gdbarch, "[");
+  set_gdbarch_stap_register_indirection_suffix (gdbarch, "]");
+  set_gdbarch_stap_gdb_register_prefix (gdbarch, "r");
+  set_gdbarch_stap_is_single_operand (gdbarch, arm_stap_is_single_operand);
+  set_gdbarch_stap_parse_special_token (gdbarch,
+					arm_stap_parse_special_token);
 
   tdep->syscall_next_pc = arm_linux_syscall_next_pc;
+
+  /* Syscall record.  */
+  tdep->arm_swi_record = NULL;
 }
 
 /* Provide a prototype to silence -Wmissing-prototypes.  */

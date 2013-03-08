@@ -1,7 +1,7 @@
 /* Fortran language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 1993, 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1993-1996, 1998-2005, 2007-2012 Free Software
+   Foundation, Inc.
 
    Contributed by Motorola.  Adapted from the C parser by Farooq Butt
    (fmbutt@engage.sps.mot.com).
@@ -32,21 +32,24 @@
 #include "valprint.h"
 #include "value.h"
 #include "cp-support.h"
+#include "charset.h"
+#include "c-lang.h"
 
 
-/* Following is dubious stuff that had been in the xcoff reader. */
+/* Following is dubious stuff that had been in the xcoff reader.  */
 
 struct saved_fcn
   {
-    long line_offset;		/* Line offset for function */
+    long line_offset;		/* Line offset for function.  */
     struct saved_fcn *next;
   };
 
 
 struct saved_bf_symnum
   {
-    long symnum_fcn;		/* Symnum of function (i.e. .function directive) */
-    long symnum_bf;		/* Symnum of .bf for this function */
+    long symnum_fcn;		/* Symnum of function (i.e. .function
+				   directive).  */
+    long symnum_bf;		/* Symnum of .bf for this function.  */
     struct saved_bf_symnum *next;
   };
 
@@ -75,6 +78,33 @@ static void f_printchar (int c, struct type *type, struct ui_file * stream);
 static void f_emit_char (int c, struct type *type,
 			 struct ui_file * stream, int quoter);
 
+/* Return the encoding that should be used for the character type
+   TYPE.  */
+
+static const char *
+f_get_encoding (struct type *type)
+{
+  const char *encoding;
+
+  switch (TYPE_LENGTH (type))
+    {
+    case 1:
+      encoding = target_charset (get_type_arch (type));
+      break;
+    case 4:
+      if (gdbarch_byte_order (get_type_arch (type)) == BFD_ENDIAN_BIG)
+	encoding = "UTF-32BE";
+      else
+	encoding = "UTF-32LE";
+      break;
+
+    default:
+      error (_("unrecognized character type"));
+    }
+
+  return encoding;
+}
+
 /* Print the character C on STREAM as part of the contents of a literal
    string whose delimiter is QUOTER.  Note that that format for printing
    characters and strings is language specific.
@@ -84,48 +114,12 @@ static void f_emit_char (int c, struct type *type,
 static void
 f_emit_char (int c, struct type *type, struct ui_file *stream, int quoter)
 {
-  c &= 0xFF;			/* Avoid sign bit follies */
+  const char *encoding = f_get_encoding (type);
 
-  if (PRINT_LITERAL_FORM (c))
-    {
-      if (c == '\\' || c == quoter)
-	fputs_filtered ("\\", stream);
-      fprintf_filtered (stream, "%c", c);
-    }
-  else
-    {
-      switch (c)
-	{
-	case '\n':
-	  fputs_filtered ("\\n", stream);
-	  break;
-	case '\b':
-	  fputs_filtered ("\\b", stream);
-	  break;
-	case '\t':
-	  fputs_filtered ("\\t", stream);
-	  break;
-	case '\f':
-	  fputs_filtered ("\\f", stream);
-	  break;
-	case '\r':
-	  fputs_filtered ("\\r", stream);
-	  break;
-	case '\033':
-	  fputs_filtered ("\\e", stream);
-	  break;
-	case '\007':
-	  fputs_filtered ("\\a", stream);
-	  break;
-	default:
-	  fprintf_filtered (stream, "\\%.3o", (unsigned int) c);
-	  break;
-	}
-    }
+  generic_emit_char (c, type, stream, quoter, encoding);
 }
 
-/* FIXME:  This is a copy of the same function from c-exp.y.  It should
-   be replaced with a true F77version. */
+/* Implementation of la_printchar.  */
 
 static void
 f_printchar (int c, struct type *type, struct ui_file *stream)
@@ -140,90 +134,23 @@ f_printchar (int c, struct type *type, struct ui_file *stream)
    are printed as appropriate.  Print ellipses at the end if we
    had to stop before printing LENGTH characters, or if FORCE_ELLIPSES.
    FIXME:  This is a copy of the same function from c-exp.y.  It should
-   be replaced with a true F77 version. */
+   be replaced with a true F77 version.  */
 
 static void
 f_printstr (struct ui_file *stream, struct type *type, const gdb_byte *string,
 	    unsigned int length, const char *encoding, int force_ellipses,
 	    const struct value_print_options *options)
 {
-  unsigned int i;
-  unsigned int things_printed = 0;
-  int in_quotes = 0;
-  int need_comma = 0;
+  const char *type_encoding = f_get_encoding (type);
 
-  if (length == 0)
-    {
-      fputs_filtered ("''", gdb_stdout);
-      return;
-    }
+  if (TYPE_LENGTH (type) == 4)
+    fputs_filtered ("4_", stream);
 
-  for (i = 0; i < length && things_printed < options->print_max; ++i)
-    {
-      /* Position of the character we are examining
-         to see whether it is repeated.  */
-      unsigned int rep1;
-      /* Number of repetitions we have detected so far.  */
-      unsigned int reps;
+  if (!encoding || !*encoding)
+    encoding = type_encoding;
 
-      QUIT;
-
-      if (need_comma)
-	{
-	  fputs_filtered (", ", stream);
-	  need_comma = 0;
-	}
-
-      rep1 = i + 1;
-      reps = 1;
-      while (rep1 < length && string[rep1] == string[i])
-	{
-	  ++rep1;
-	  ++reps;
-	}
-
-      if (reps > options->repeat_count_threshold)
-	{
-	  if (in_quotes)
-	    {
-	      if (options->inspect_it)
-		fputs_filtered ("\\', ", stream);
-	      else
-		fputs_filtered ("', ", stream);
-	      in_quotes = 0;
-	    }
-	  f_printchar (string[i], type, stream);
-	  fprintf_filtered (stream, " <repeats %u times>", reps);
-	  i = rep1 - 1;
-	  things_printed += options->repeat_count_threshold;
-	  need_comma = 1;
-	}
-      else
-	{
-	  if (!in_quotes)
-	    {
-	      if (options->inspect_it)
-		fputs_filtered ("\\'", stream);
-	      else
-		fputs_filtered ("'", stream);
-	      in_quotes = 1;
-	    }
-	  LA_EMIT_CHAR (string[i], type, stream, '"');
-	  ++things_printed;
-	}
-    }
-
-  /* Terminate the quotes if necessary.  */
-  if (in_quotes)
-    {
-      if (options->inspect_it)
-	fputs_filtered ("\\'", stream);
-      else
-	fputs_filtered ("'", stream);
-    }
-
-  if (force_ellipses || i < length)
-    fputs_filtered ("...", stream);
+  generic_printstr (stream, type, string, length, encoding,
+		    force_ellipses, '\'', 0, options);
 }
 
 
@@ -333,18 +260,14 @@ f_word_break_characters (void)
   return retval;
 }
 
-/* Consider the modules separator :: as a valid symbol name character class.  */
+/* Consider the modules separator :: as a valid symbol name character
+   class.  */
 
-static char **
+static VEC (char_ptr) *
 f_make_symbol_completion_list (char *text, char *word)
 {
   return default_make_symbol_completion_list_break_on (text, word, ":");
 }
-
-/* This is declared in c-lang.h but it is silly to import that file for what
-   is already just a hack. */
-extern int c_value_print (struct value *, struct ui_file *,
-			  const struct value_print_options *);
 
 const struct language_defn f_language_defn =
 {
@@ -366,12 +289,14 @@ const struct language_defn f_language_defn =
   default_print_typedef,	/* Print a typedef using appropriate syntax */
   f_val_print,			/* Print a value using appropriate syntax */
   c_value_print,		/* FIXME */
+  default_read_var_value,	/* la_read_var_value */
   NULL,				/* Language specific skip_trampoline */
   NULL,                    	/* name_of_this */
   cp_lookup_symbol_nonlocal,	/* lookup_symbol_nonlocal */
   basic_lookup_transparent_type,/* lookup_transparent_type */
   NULL,				/* Language specific symbol demangler */
-  NULL,				/* Language specific class_name_from_physname */
+  NULL,				/* Language specific
+				   class_name_from_physname */
   f_op_print_tab,		/* expression operators for printing */
   0,				/* arrays are first-class (not c-style) */
   1,				/* String lower bound */
@@ -381,6 +306,8 @@ const struct language_defn f_language_defn =
   default_print_array_index,
   default_pass_by_reference,
   default_get_string,
+  NULL,				/* la_get_symbol_name_cmp */
+  iterate_over_symbols,
   LANG_MAGIC
 };
 
@@ -504,14 +431,14 @@ SAVED_F77_COMMON_PTR current_common = NULL;	/* Ptr to current COMMON */
 static SAVED_BF_PTR saved_bf_list = NULL;	/* Ptr to (.bf,function) 
 						   list */
 static SAVED_BF_PTR saved_bf_list_end = NULL;	/* Ptr to above list's end */
-static SAVED_BF_PTR current_head_bf_list = NULL;	/* Current head of above list
-							 */
+static SAVED_BF_PTR current_head_bf_list = NULL;    /* Current head of
+						       above list.  */
 
 static SAVED_BF_PTR tmp_bf_ptr;	/* Generic temporary for use 
-				   in macros */
+				   in macros.  */
 
 /* The following function simply enters a given common block onto 
-   the global common block chain */
+   the global common block chain.  */
 
 static void
 add_common_block (char *name, CORE_ADDR offset, int secnum, char *func_stab)
@@ -522,7 +449,7 @@ add_common_block (char *name, CORE_ADDR offset, int secnum, char *func_stab)
   /* If the COMMON block we are trying to add has a blank 
      name (i.e. "#BLNK_COM") then we set it to __BLANK
      because the darn "#" character makes GDB's input 
-     parser have fits. */
+     parser have fits.  */
 
 
   if (strcmp (name, BLANK_COMMON_NAME_ORIGINAL) == 0
@@ -542,7 +469,7 @@ add_common_block (char *name, CORE_ADDR offset, int secnum, char *func_stab)
   tmp->name = xmalloc (strlen (name) + 1);
 
   /* local_copy_func_stab is a stabstring, let us first extract the 
-     function name from the stab by NULLing out the ':' character. */
+     function name from the stab by NULLing out the ':' character.  */
 
 
   c = NULL;
@@ -579,7 +506,7 @@ add_common_block (char *name, CORE_ADDR offset, int secnum, char *func_stab)
 #endif
 
 /* The following function simply enters a given common entry onto 
-   the "current_common" block that has been saved away. */
+   the "current_common" block that has been saved away.  */
 
 #if 0
 static void
@@ -591,7 +518,7 @@ add_common_entry (struct symbol *entry_sym_ptr)
 
   /* The order of this list is important, since 
      we expect the entries to appear in decl.
-     order when we later issue "info common" calls */
+     order when we later issue "info common" calls.  */
 
   tmp = allocate_common_entry_node ();
 
@@ -616,7 +543,7 @@ add_common_entry (struct symbol *entry_sym_ptr)
 }
 #endif
 
-/* This routine finds the first encountred COMMON block named "name" */
+/* This routine finds the first encountred COMMON block named "name".  */
 
 #if 0
 static SAVED_F77_COMMON_PTR
@@ -639,10 +566,10 @@ find_first_common_named (char *name)
 #endif
 
 /* This routine finds the first encountred COMMON block named "name" 
-   that belongs to function funcname */
+   that belongs to function funcname.  */
 
 SAVED_F77_COMMON_PTR
-find_common_for_function (char *name, char *funcname)
+find_common_for_function (const char *name, const char *funcname)
 {
 
   SAVED_F77_COMMON_PTR tmp;
@@ -672,7 +599,7 @@ patch_common_entries (SAVED_F77_COMMON_PTR blk, CORE_ADDR offset, int secnum)
 {
   COMMON_ENTRY_PTR entry;
 
-  blk->offset = offset;		/* Keep this around for future use. */
+  blk->offset = offset;		/* Keep this around for future use.  */
 
   entry = blk->entries;
 
@@ -690,7 +617,7 @@ patch_common_entries (SAVED_F77_COMMON_PTR blk, CORE_ADDR offset, int secnum)
    blocks occur with relative infrequency, we simply do a linear scan on
    the name.  Eventually, the best way to do this will be a
    hashed-lookup.  Secnum is the section number for the .bss section
-   (which is where common data lives). */
+   (which is where common data lives).  */
 
 static void
 patch_all_commons_by_name (char *name, CORE_ADDR offset, int secnum)
@@ -728,7 +655,7 @@ patch_all_commons_by_name (char *name, CORE_ADDR offset, int secnum)
    #line pragmas sometimes cause line ranges to get messed up 
    we simply create a linear list.  This list can then be searched 
    first by a queueing algorithm and upon failure fall back to 
-   a linear scan. */
+   a linear scan.  */
 
 #if 0
 #define ADD_BF_SYMNUM(bf_sym,fcn_sym) \
@@ -757,7 +684,7 @@ else \
 		   }
 #endif
 
-/* This function frees the entire (.bf,function) list */
+/* This function frees the entire (.bf,function) list.  */
 
 #if 0
 static void
@@ -788,7 +715,7 @@ get_bf_for_fcn (long the_function)
   int nprobes = 0;
 
   /* First use a simple queuing algorithm (i.e. look and see if the 
-     item at the head of the queue is the one you want)  */
+     item at the head of the queue is the one you want).  */
 
   if (saved_bf_list == NULL)
     internal_error (__FILE__, __LINE__,
@@ -807,7 +734,7 @@ get_bf_for_fcn (long the_function)
 
   /* If the above did not work (probably because #line directives were 
      used in the sourcefile and they messed up our internal tables) we now do
-     the ugly linear scan */
+     the ugly linear scan.  */
 
   if (global_remote_debug)
     fprintf_unfiltered (gdb_stderr, "\ndefaulting to linear scan\n");

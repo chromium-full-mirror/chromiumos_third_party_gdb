@@ -1,7 +1,7 @@
 /* Modula 2 language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 1992, 1993, 1994, 1995, 1996, 1998, 2000, 2002, 2003, 2004,
-   2005, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1992-1996, 1998, 2000, 2002-2005, 2007-2012 Free
+   Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -42,7 +42,7 @@ static void
 m2_emit_char (int c, struct type *type, struct ui_file *stream, int quoter)
 {
 
-  c &= 0xFF;			/* Avoid sign bit follies */
+  c &= 0xFF;			/* Avoid sign bit follies.  */
 
   if (PRINT_LITERAL_FORM (c))
     {
@@ -243,7 +243,8 @@ evaluate_subexp_modula2 (struct type *expect_type, struct expression *exp,
 	  type = TYPE_FIELD_TYPE (type, 0);
 	  if (type == NULL || (TYPE_CODE (type) != TYPE_CODE_PTR))
 	    {
-	      warning (_("internal error: unbounded array structure is unknown"));
+	      warning (_("internal error: unbounded "
+			 "array structure is unknown"));
 	      return evaluate_subexp_standard (expect_type, exp, pos, noside);
 	    }
 	  /* i18n: Do not translate the "_m2_contents" part!  */
@@ -254,7 +255,7 @@ evaluate_subexp_modula2 (struct type *expect_type, struct expression *exp,
 	  if (value_type (arg1) != type)
 	    arg1 = value_cast (type, arg1);
 
-	  type = check_typedef (value_type (arg1));
+	  check_typedef (value_type (arg1));
 	  return value_ind (value_ptradd (arg1, value_as_long (arg2)));
 	}
       else
@@ -384,12 +385,14 @@ const struct language_defn m2_language_defn =
   m2_print_typedef,		/* Print a typedef using appropriate syntax */
   m2_val_print,			/* Print a value using appropriate syntax */
   c_value_print,		/* Print a top-level value */
+  default_read_var_value,	/* la_read_var_value */
   NULL,				/* Language specific skip_trampoline */
   NULL,		                /* name_of_this */
   basic_lookup_symbol_nonlocal,	/* lookup_symbol_nonlocal */
   basic_lookup_transparent_type,/* lookup_transparent_type */
   NULL,				/* Language specific symbol demangler */
-  NULL,				/* Language specific class_name_from_physname */
+  NULL,				/* Language specific
+				   class_name_from_physname */
   m2_op_print_tab,		/* expression operators for printing */
   0,				/* arrays are first-class (not c-style) */
   0,				/* String lower bound */
@@ -399,6 +402,8 @@ const struct language_defn m2_language_defn =
   default_print_array_index,
   default_pass_by_reference,
   default_get_string,
+  NULL,				/* la_get_symbol_name_cmp */
+  iterate_over_symbols,
   LANG_MAGIC
 };
 

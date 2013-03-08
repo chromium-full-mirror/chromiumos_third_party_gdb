@@ -1,7 +1,7 @@
 /* PPC GNU/Linux native support.
 
-   Copyright (C) 1988, 1989, 1991, 1992, 1994, 1996, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1988-1989, 1991-1992, 1994, 1996, 2000-2012 Free
+   Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -41,7 +41,7 @@
 #include <sys/procfs.h>
 #include <sys/ptrace.h>
 
-/* Prototypes for supply_gregset etc. */
+/* Prototypes for supply_gregset etc.  */
 #include "gregset.h"
 #include "ppc-tdep.h"
 #include "ppc-linux-tdep.h"
@@ -129,12 +129,12 @@
 
 struct ppc_debug_info
 {
-        uint32_t version;               /* Only version 1 exists to date */
+        uint32_t version;               /* Only version 1 exists to date.  */
         uint32_t num_instruction_bps;
         uint32_t num_data_bps;
         uint32_t num_condition_regs;
         uint32_t data_bp_alignment;
-        uint32_t sizeof_condition;      /* size of the DVC register */
+        uint32_t sizeof_condition;      /* size of the DVC register.  */
         uint64_t features;
 };
 
@@ -204,7 +204,7 @@ struct ppc_hw_breakpoint
 
    There are 32 vector registers 16 bytes longs, plus a VSCR register
    which is only 4 bytes long, but is fetched as a 16 bytes
-   quantity. Up to here we have the elf_vrregset_t structure.
+   quantity.  Up to here we have the elf_vrregset_t structure.
    Appended to this there is space for the VRSAVE register: 4 bytes.
    Even though this vrsave register is not included in the regset
    typedef, it is handled by the ptrace requests.
@@ -263,7 +263,7 @@ typedef char gdb_vrregset_t[SIZEOF_VRREGS];
 
 typedef char gdb_vsxregset_t[SIZEOF_VSXREGS];
 
-/* On PPC processors that support the the Signal Processing Extension
+/* On PPC processors that support the Signal Processing Extension
    (SPE) APU, the general-purpose registers are 64 bits long.
    However, the ordinary Linux kernel PTRACE_PEEKUSER / PTRACE_POKEUSER
    ptrace calls only access the lower half of each register, to allow
@@ -274,7 +274,7 @@ typedef char gdb_vsxregset_t[SIZEOF_VSXREGS];
 
    GDB itself continues to claim the general-purpose registers are 32
    bits long.  It has unnamed raw registers that hold the upper halves
-   of the gprs, and the the full 64-bit SIMD views of the registers,
+   of the gprs, and the full 64-bit SIMD views of the registers,
    'ev0' -- 'ev31', are pseudo-registers that splice the top and
    bottom halves together.
 
@@ -324,10 +324,14 @@ PT_R0, PT_R1, PT_R2, PT_R3, PT_R4, PT_R5, PT_R6, PT_R7,
 PT_R8, PT_R9, PT_R10, PT_R11, PT_R12, PT_R13, PT_R14, PT_R15,
 PT_R16, PT_R17, PT_R18, PT_R19, PT_R20, PT_R21, PT_R22, PT_R23,
 PT_R24, PT_R25, PT_R26, PT_R27, PT_R28, PT_R29, PT_R30, PT_R31,
-PT_FPR0, PT_FPR0 + 2, PT_FPR0 + 4, PT_FPR0 + 6, PT_FPR0 + 8, PT_FPR0 + 10, PT_FPR0 + 12, PT_FPR0 + 14,
-PT_FPR0 + 16, PT_FPR0 + 18, PT_FPR0 + 20, PT_FPR0 + 22, PT_FPR0 + 24, PT_FPR0 + 26, PT_FPR0 + 28, PT_FPR0 + 30,
-PT_FPR0 + 32, PT_FPR0 + 34, PT_FPR0 + 36, PT_FPR0 + 38, PT_FPR0 + 40, PT_FPR0 + 42, PT_FPR0 + 44, PT_FPR0 + 46,
-PT_FPR0 + 48, PT_FPR0 + 50, PT_FPR0 + 52, PT_FPR0 + 54, PT_FPR0 + 56, PT_FPR0 + 58, PT_FPR0 + 60, PT_FPR0 + 62,
+PT_FPR0, PT_FPR0 + 2, PT_FPR0 + 4, PT_FPR0 + 6,
+PT_FPR0 + 8, PT_FPR0 + 10, PT_FPR0 + 12, PT_FPR0 + 14,
+PT_FPR0 + 16, PT_FPR0 + 18, PT_FPR0 + 20, PT_FPR0 + 22,
+PT_FPR0 + 24, PT_FPR0 + 26, PT_FPR0 + 28, PT_FPR0 + 30,
+PT_FPR0 + 32, PT_FPR0 + 34, PT_FPR0 + 36, PT_FPR0 + 38,
+PT_FPR0 + 40, PT_FPR0 + 42, PT_FPR0 + 44, PT_FPR0 + 46,
+PT_FPR0 + 48, PT_FPR0 + 50, PT_FPR0 + 52, PT_FPR0 + 54,
+PT_FPR0 + 56, PT_FPR0 + 58, PT_FPR0 + 60, PT_FPR0 + 62,
 PT_NIP, PT_MSR, PT_CCR, PT_LNK, PT_CTR, PT_XER, PT_MQ */
 /* *INDENT_ON * */
 
@@ -340,7 +344,7 @@ ppc_register_u_addr (struct gdbarch *gdbarch, int regno)
      interface, and not the wordsize of the program's ABI.  */
   int wordsize = sizeof (long);
 
-  /* General purpose registers occupy 1 slot each in the buffer */
+  /* General purpose registers occupy 1 slot each in the buffer.  */
   if (regno >= tdep->ppc_gp0_regnum 
       && regno < tdep->ppc_gp0_regnum + ppc_num_gprs)
     u_addr = ((regno - tdep->ppc_gp0_regnum + PT_R0) * wordsize);
@@ -353,7 +357,7 @@ ppc_register_u_addr (struct gdbarch *gdbarch, int regno)
       && regno < tdep->ppc_fp0_regnum + ppc_num_fprs)
     u_addr = (PT_FPR0 * wordsize) + ((regno - tdep->ppc_fp0_regnum) * 8);
 
-  /* UISA special purpose registers: 1 slot each */
+  /* UISA special purpose registers: 1 slot each.  */
   if (regno == gdbarch_pc_regnum (gdbarch))
     u_addr = PT_NIP * wordsize;
   if (regno == tdep->ppc_lr_regnum)
@@ -458,7 +462,8 @@ fetch_altivec_register (struct regcache *regcache, int tid, int regno)
     offset = vrregsize - register_size (gdbarch, tdep->ppc_vrsave_regnum);
   
   regcache_raw_supply (regcache, regno,
-		       regs + (regno - tdep->ppc_vr0_regnum) * vrregsize + offset);
+		       regs + (regno
+			       - tdep->ppc_vr0_regnum) * vrregsize + offset);
 }
 
 /* Fetch the top 32 bits of TID's general-purpose registers and the
@@ -542,7 +547,7 @@ fetch_register (struct regcache *regcache, int tid, int regno)
   /* This isn't really an address.  But ptrace thinks of it as one.  */
   CORE_ADDR regaddr = ppc_register_u_addr (gdbarch, regno);
   int bytes_transferred;
-  unsigned int offset;         /* Offset of registers within the u area. */
+  unsigned int offset;         /* Offset of registers within the u area.  */
   char buf[MAX_REGISTER_SIZE];
 
   if (altivec_register_p (gdbarch, regno))
@@ -588,9 +593,10 @@ fetch_register (struct regcache *regcache, int tid, int regno)
        bytes_transferred < register_size (gdbarch, regno);
        bytes_transferred += sizeof (long))
     {
+      long l;
+
       errno = 0;
-      *(long *) &buf[bytes_transferred]
-        = ptrace (PTRACE_PEEKUSER, tid, (PTRACE_TYPE_ARG3) regaddr, 0);
+      l = ptrace (PTRACE_PEEKUSER, tid, (PTRACE_TYPE_ARG3) regaddr, 0);
       regaddr += sizeof (long);
       if (errno != 0)
 	{
@@ -599,6 +605,7 @@ fetch_register (struct regcache *regcache, int tid, int regno)
 		   gdbarch_register_name (gdbarch, regno), regno);
 	  perror_with_name (message);
 	}
+      memcpy (&buf[bytes_transferred], &l, sizeof (l));
     }
 
   /* Now supply the register.  Keep in mind that the regcache's idea
@@ -854,10 +861,10 @@ static void
 ppc_linux_fetch_inferior_registers (struct target_ops *ops,
 				    struct regcache *regcache, int regno)
 {
-  /* Overload thread id onto process id */
+  /* Overload thread id onto process id.  */
   int tid = TIDGET (inferior_ptid);
 
-  /* No thread id, just use process id */
+  /* No thread id, just use process id.  */
   if (tid == 0)
     tid = PIDGET (inferior_ptid);
 
@@ -867,7 +874,7 @@ ppc_linux_fetch_inferior_registers (struct target_ops *ops,
     fetch_register (regcache, tid, regno);
 }
 
-/* Store one VSX register. */
+/* Store one VSX register.  */
 static void
 store_vsx_register (const struct regcache *regcache, int tid, int regno)
 {
@@ -896,7 +903,7 @@ store_vsx_register (const struct regcache *regcache, int tid, int regno)
     perror_with_name (_("Unable to store VSX register"));
 }
 
-/* Store one register. */
+/* Store one register.  */
 static void
 store_altivec_register (const struct regcache *regcache, int tid, int regno)
 {
@@ -924,7 +931,8 @@ store_altivec_register (const struct regcache *regcache, int tid, int regno)
     offset = vrregsize - register_size (gdbarch, tdep->ppc_vrsave_regnum);
 
   regcache_raw_collect (regcache, regno,
-			regs + (regno - tdep->ppc_vr0_regnum) * vrregsize + offset);
+			regs + (regno
+				- tdep->ppc_vr0_regnum) * vrregsize + offset);
 
   ret = ptrace (PTRACE_SETVRREGS, tid, 0, &regs);
   if (ret < 0)
@@ -1067,9 +1075,11 @@ store_register (const struct regcache *regcache, int tid, int regno)
 
   for (i = 0; i < bytes_to_transfer; i += sizeof (long))
     {
+      long l;
+
+      memcpy (&l, &buf[i], sizeof (l));
       errno = 0;
-      ptrace (PTRACE_POKEUSER, tid, (PTRACE_TYPE_ARG3) regaddr,
-	      *(long *) &buf[i]);
+      ptrace (PTRACE_POKEUSER, tid, (PTRACE_TYPE_ARG3) regaddr, l);
       regaddr += sizeof (long);
 
       if (errno == EIO 
@@ -1341,7 +1351,8 @@ store_ppc_registers (const struct regcache *regcache, int tid)
 }
 
 /* Fetch the AT_HWCAP entry from the aux vector.  */
-unsigned long ppc_linux_get_hwcap (void)
+static unsigned long
+ppc_linux_get_hwcap (void)
 {
   CORE_ADDR field;
 
@@ -1410,16 +1421,20 @@ have_ptrace_booke_interface (void)
       /* Check for kernel support for BOOKE debug registers.  */
       if (ptrace (PPC_PTRACE_GETHWDBGINFO, tid, 0, &booke_debug_info) >= 0)
 	{
-	  have_ptrace_booke_interface = 1;
-	  max_slots_number = booke_debug_info.num_instruction_bps
-	    + booke_debug_info.num_data_bps + booke_debug_info.num_condition_regs;
+	  /* Check whether ptrace BOOKE interface is functional and
+	     provides any supported feature.  */
+	  if (booke_debug_info.features != 0)
+	    {
+	      have_ptrace_booke_interface = 1;
+	      max_slots_number = booke_debug_info.num_instruction_bps
+	        + booke_debug_info.num_data_bps
+	        + booke_debug_info.num_condition_regs;
+	      return have_ptrace_booke_interface;
+	    }
 	}
-      else
-	{
-	  /* Old school interface and no BOOKE debug registers support.  */
-	  have_ptrace_booke_interface = 0;
-	  memset (&booke_debug_info, 0, sizeof (struct ppc_debug_info));
-	}
+      /* Old school interface and no BOOKE debug registers support.  */
+      have_ptrace_booke_interface = 0;
+      memset (&booke_debug_info, 0, sizeof (struct ppc_debug_info));
     }
 
   return have_ptrace_booke_interface;
@@ -1449,7 +1464,7 @@ ppc_linux_can_use_hw_breakpoint (int type, int cnt, int ot)
   if (type == bp_hardware_watchpoint || type == bp_read_watchpoint
       || type == bp_access_watchpoint || type == bp_watchpoint)
     {
-      if (cnt > total_hw_wp)
+      if (cnt + ot > total_hw_wp)
 	return -1;
     }
   else if (type == bp_hardware_breakpoint)
@@ -1463,9 +1478,9 @@ ppc_linux_can_use_hw_breakpoint (int type, int cnt, int ot)
       int tid;
       ptid_t ptid = inferior_ptid;
 
-      /* We need to know whether ptrace supports PTRACE_SET_DEBUGREG and whether
-	 the target has DABR.  If either answer is no, the ptrace call will
-	 return -1.  Fail in that case.  */
+      /* We need to know whether ptrace supports PTRACE_SET_DEBUGREG
+	 and whether the target has DABR.  If either answer is no, the
+	 ptrace call will return -1.  Fail in that case.  */
       tid = TIDGET (ptid);
       if (tid == 0)
 	tid = PIDGET (ptid);
@@ -1489,9 +1504,16 @@ ppc_linux_region_ok_for_hw_watchpoint (CORE_ADDR addr, int len)
      to determine the hardcoded watchable region for watchpoints.  */
   if (have_ptrace_booke_interface ())
     {
-      if (booke_debug_info.data_bp_alignment
-	  && (addr + len > (addr & ~(booke_debug_info.data_bp_alignment - 1))
-	      + booke_debug_info.data_bp_alignment))
+      /* DAC-based processors (i.e., embedded processors), like the PowerPC 440
+	 have ranged watchpoints and can watch any access within an arbitrary
+	 memory region.  This is useful to watch arrays and structs, for
+	 instance.  It takes two hardware watchpoints though.  */
+      if (len > 1
+	  && booke_debug_info.features & PPC_DEBUG_FEATURE_DATA_BP_RANGE)
+	return 2;
+      else if (booke_debug_info.data_bp_alignment
+	       && (addr + len > (addr & ~(booke_debug_info.data_bp_alignment - 1))
+		   + booke_debug_info.data_bp_alignment))
 	return 0;
     }
   /* addr+len must fall in the 8 byte watchable region for DABR-based
@@ -1511,11 +1533,11 @@ ppc_linux_region_ok_for_hw_watchpoint (CORE_ADDR addr, int len)
 static int
 booke_cmp_hw_point (struct ppc_hw_breakpoint *a, struct ppc_hw_breakpoint *b)
 {
-  return (a->trigger_type       == b->trigger_type
-	  && a->addr_mode       == b->addr_mode
-	  && a->condition_mode  == b->condition_mode
-	  && a->addr            == b->addr
-	  && a->addr2           == b->addr2
+  return (a->trigger_type == b->trigger_type
+	  && a->addr_mode == b->addr_mode
+	  && a->condition_mode == b->condition_mode
+	  && a->addr == b->addr
+	  && a->addr2 == b->addr2
 	  && a->condition_value == b->condition_value);
 }
 
@@ -1540,7 +1562,8 @@ booke_find_thread_points_by_tid (int tid, int alloc_new)
   if (alloc_new)
     {
       t = xmalloc (sizeof (struct thread_points));
-      t->hw_breaks = xzalloc (max_slots_number * sizeof (struct hw_break_tuple));
+      t->hw_breaks
+	= xzalloc (max_slots_number * sizeof (struct hw_break_tuple));
       t->tid = tid;
       VEC_safe_push (thread_points_p, ppc_threads, t);
     }
@@ -1614,33 +1637,58 @@ booke_remove_point (struct ppc_hw_breakpoint *b, int tid)
   errno = 0;
   if (ptrace (PPC_PTRACE_DELHWDEBUG, tid, 0, hw_breaks[i].slot) < 0)
     if (errno != ENOENT)
-      perror_with_name (_("Unexpected error deleting breakpoint or watchpoint"));
+      perror_with_name (_("Unexpected error deleting "
+			  "breakpoint or watchpoint"));
 
   xfree (hw_breaks[i].hw_break);
   hw_breaks[i].hw_break = NULL;
 }
 
+/* Return the number of registers needed for a ranged breakpoint.  */
+
+static int
+ppc_linux_ranged_break_num_registers (struct target_ops *target)
+{
+  return ((have_ptrace_booke_interface ()
+	   && booke_debug_info.features & PPC_DEBUG_FEATURE_INSN_BP_RANGE)?
+	  2 : -1);
+}
+
+/* Insert the hardware breakpoint described by BP_TGT.  Returns 0 for
+   success, 1 if hardware breakpoints are not supported or -1 for failure.  */
+
 static int
 ppc_linux_insert_hw_breakpoint (struct gdbarch *gdbarch,
 				  struct bp_target_info *bp_tgt)
 {
-  ptid_t ptid;
   struct lwp_info *lp;
   struct ppc_hw_breakpoint p;
 
   if (!have_ptrace_booke_interface ())
     return -1;
 
-  p.version         = PPC_DEBUG_CURRENT_VERSION;
-  p.trigger_type    = PPC_BREAKPOINT_TRIGGER_EXECUTE;
-  p.addr_mode       = PPC_BREAKPOINT_MODE_EXACT;
-  p.condition_mode  = PPC_BREAKPOINT_CONDITION_NONE;
-  p.addr            = (uint64_t) bp_tgt->placed_address;
-  p.addr2           = 0;
+  p.version = PPC_DEBUG_CURRENT_VERSION;
+  p.trigger_type = PPC_BREAKPOINT_TRIGGER_EXECUTE;
+  p.condition_mode = PPC_BREAKPOINT_CONDITION_NONE;
+  p.addr = (uint64_t) bp_tgt->placed_address;
   p.condition_value = 0;
 
-  ALL_LWPS (lp, ptid)
-    booke_insert_point (&p, TIDGET (ptid));
+  if (bp_tgt->length)
+    {
+      p.addr_mode = PPC_BREAKPOINT_MODE_RANGE_INCLUSIVE;
+
+      /* The breakpoint will trigger if the address of the instruction is
+	 within the defined range, as follows: p.addr <= address < p.addr2.  */
+      p.addr2 = (uint64_t) bp_tgt->placed_address + bp_tgt->length;
+    }
+  else
+    {
+      p.addr_mode = PPC_BREAKPOINT_MODE_EXACT;
+      p.addr2 = 0;
+    }
+
+  ALL_LWPS (lp)
+    booke_insert_point (&p, TIDGET (lp->ptid));
 
   return 0;
 }
@@ -1649,23 +1697,34 @@ static int
 ppc_linux_remove_hw_breakpoint (struct gdbarch *gdbarch,
 				  struct bp_target_info *bp_tgt)
 {
-  ptid_t ptid;
   struct lwp_info *lp;
   struct ppc_hw_breakpoint p;
 
   if (!have_ptrace_booke_interface ())
     return -1;
 
-  p.version         = PPC_DEBUG_CURRENT_VERSION;
-  p.trigger_type    = PPC_BREAKPOINT_TRIGGER_EXECUTE;
-  p.addr_mode       = PPC_BREAKPOINT_MODE_EXACT;
-  p.condition_mode  = PPC_BREAKPOINT_CONDITION_NONE;
-  p.addr            = (uint64_t) bp_tgt->placed_address;
-  p.addr2           = 0;
+  p.version = PPC_DEBUG_CURRENT_VERSION;
+  p.trigger_type = PPC_BREAKPOINT_TRIGGER_EXECUTE;
+  p.condition_mode = PPC_BREAKPOINT_CONDITION_NONE;
+  p.addr = (uint64_t) bp_tgt->placed_address;
   p.condition_value = 0;
 
-  ALL_LWPS (lp, ptid)
-    booke_remove_point (&p, TIDGET (ptid));
+  if (bp_tgt->length)
+    {
+      p.addr_mode = PPC_BREAKPOINT_MODE_RANGE_INCLUSIVE;
+
+      /* The breakpoint will trigger if the address of the instruction is within
+	 the defined range, as follows: p.addr <= address < p.addr2.  */
+      p.addr2 = (uint64_t) bp_tgt->placed_address + bp_tgt->length;
+    }
+  else
+    {
+      p.addr_mode = PPC_BREAKPOINT_MODE_EXACT;
+      p.addr2 = 0;
+    }
+
+  ALL_LWPS (lp)
+    booke_remove_point (&p, TIDGET (lp->ptid));
 
   return 0;
 }
@@ -1683,6 +1742,62 @@ get_trigger_type (int rw)
     t = PPC_BREAKPOINT_TRIGGER_READ | PPC_BREAKPOINT_TRIGGER_WRITE;
 
   return t;
+}
+
+/* Insert a new masked watchpoint at ADDR using the mask MASK.
+   RW may be hw_read for a read watchpoint, hw_write for a write watchpoint
+   or hw_access for an access watchpoint.  Returns 0 on success and throws
+   an error on failure.  */
+
+static int
+ppc_linux_insert_mask_watchpoint (struct target_ops *ops, CORE_ADDR addr,
+				  CORE_ADDR mask, int rw)
+{
+  struct lwp_info *lp;
+  struct ppc_hw_breakpoint p;
+
+  gdb_assert (have_ptrace_booke_interface ());
+
+  p.version = PPC_DEBUG_CURRENT_VERSION;
+  p.trigger_type = get_trigger_type (rw);
+  p.addr_mode = PPC_BREAKPOINT_MODE_MASK;
+  p.condition_mode = PPC_BREAKPOINT_CONDITION_NONE;
+  p.addr = addr;
+  p.addr2 = mask;
+  p.condition_value = 0;
+
+  ALL_LWPS (lp)
+    booke_insert_point (&p, TIDGET (lp->ptid));
+
+  return 0;
+}
+
+/* Remove a masked watchpoint at ADDR with the mask MASK.
+   RW may be hw_read for a read watchpoint, hw_write for a write watchpoint
+   or hw_access for an access watchpoint.  Returns 0 on success and throws
+   an error on failure.  */
+
+static int
+ppc_linux_remove_mask_watchpoint (struct target_ops *ops, CORE_ADDR addr,
+				  CORE_ADDR mask, int rw)
+{
+  struct lwp_info *lp;
+  struct ppc_hw_breakpoint p;
+
+  gdb_assert (have_ptrace_booke_interface ());
+
+  p.version = PPC_DEBUG_CURRENT_VERSION;
+  p.trigger_type = get_trigger_type (rw);
+  p.addr_mode = PPC_BREAKPOINT_MODE_MASK;
+  p.condition_mode = PPC_BREAKPOINT_CONDITION_NONE;
+  p.addr = addr;
+  p.addr2 = mask;
+  p.condition_value = 0;
+
+  ALL_LWPS (lp)
+    booke_remove_point (&p, TIDGET (lp->ptid));
+
+  return 0;
 }
 
 /* Check whether we have at least one free DVC register.  */
@@ -1749,7 +1864,8 @@ calculate_dvc (CORE_ADDR addr, int len, CORE_ADDR data_value,
 
   *condition_mode = PPC_BREAKPOINT_CONDITION_AND;
   for (i = 0; i < num_byte_enable; i++)
-    *condition_mode |= PPC_BREAKPOINT_CONDITION_BE (i + rightmost_enabled_byte);
+    *condition_mode
+      |= PPC_BREAKPOINT_CONDITION_BE (i + rightmost_enabled_byte);
 
   /* Now we need to match the position within the DVC of the comparison
      value with where the watch region is relative to the window
@@ -1798,7 +1914,7 @@ num_memory_accesses (struct value *v)
 	  if (!value_lazy (v))
 	    found_memory_cnt++;
 	}
-      /* Other kinds of values are not fine. */
+      /* Other kinds of values are not fine.  */
       else
 	return -1;
     }
@@ -1810,10 +1926,11 @@ num_memory_accesses (struct value *v)
    DVC (Data Value Compare) register in BookE processors.  The expression
    must test the watch value for equality with a constant expression.
    If the function returns 1, DATA_VALUE will contain the constant against
-   which the watch value should be compared.  */
+   which the watch value should be compared and LEN will contain the size
+   of the constant.  */
 static int
 check_condition (CORE_ADDR watch_addr, struct expression *cond,
-		 CORE_ADDR *data_value)
+		 CORE_ADDR *data_value, int *len)
 {
   int pc = 1, num_accesses_left, num_accesses_right;
   struct value *left_val, *right_val, *left_chain, *right_chain;
@@ -1845,11 +1962,23 @@ check_condition (CORE_ADDR watch_addr, struct expression *cond,
   if (num_accesses_left == 1 && num_accesses_right == 0
       && VALUE_LVAL (left_val) == lval_memory
       && value_address (left_val) == watch_addr)
-    *data_value = value_as_long (right_val);
+    {
+      *data_value = value_as_long (right_val);
+
+      /* DATA_VALUE is the constant in RIGHT_VAL, but actually has
+	 the same type as the memory region referenced by LEFT_VAL.  */
+      *len = TYPE_LENGTH (check_typedef (value_type (left_val)));
+    }
   else if (num_accesses_left == 0 && num_accesses_right == 1
 	   && VALUE_LVAL (right_val) == lval_memory
 	   && value_address (right_val) == watch_addr)
-    *data_value = value_as_long (left_val);
+    {
+      *data_value = value_as_long (left_val);
+
+      /* DATA_VALUE is the constant in LEFT_VAL, but actually has
+	 the same type as the memory region referenced by RIGHT_VAL.  */
+      *len = TYPE_LENGTH (check_typedef (value_type (right_val)));
+    }
   else
     {
       free_value_chain (left_chain);
@@ -1875,7 +2004,58 @@ ppc_linux_can_accel_watchpoint_condition (CORE_ADDR addr, int len, int rw,
 
   return (have_ptrace_booke_interface ()
 	  && booke_debug_info.num_condition_regs > 0
-	  && check_condition (addr, cond, &data_value));
+	  && check_condition (addr, cond, &data_value, &len));
+}
+
+/* Set up P with the parameters necessary to request a watchpoint covering
+   LEN bytes starting at ADDR and if possible with condition expression COND
+   evaluated by hardware.  INSERT tells if we are creating a request for
+   inserting or removing the watchpoint.  */
+
+static void
+create_watchpoint_request (struct ppc_hw_breakpoint *p, CORE_ADDR addr,
+			   int len, int rw, struct expression *cond,
+			   int insert)
+{
+  if (len == 1
+      || !(booke_debug_info.features & PPC_DEBUG_FEATURE_DATA_BP_RANGE))
+    {
+      int use_condition;
+      CORE_ADDR data_value;
+
+      use_condition = (insert? can_use_watchpoint_cond_accel ()
+			: booke_debug_info.num_condition_regs > 0);
+      if (cond && use_condition && check_condition (addr, cond,
+						    &data_value, &len))
+	calculate_dvc (addr, len, data_value, &p->condition_mode,
+		       &p->condition_value);
+      else
+	{
+	  p->condition_mode = PPC_BREAKPOINT_CONDITION_NONE;
+	  p->condition_value = 0;
+	}
+
+      p->addr_mode = PPC_BREAKPOINT_MODE_EXACT;
+      p->addr2 = 0;
+    }
+  else
+    {
+      p->addr_mode = PPC_BREAKPOINT_MODE_RANGE_INCLUSIVE;
+      p->condition_mode = PPC_BREAKPOINT_CONDITION_NONE;
+      p->condition_value = 0;
+
+      /* The watchpoint will trigger if the address of the memory access is
+	 within the defined range, as follows: p->addr <= address < p->addr2.
+
+	 Note that the above sentence just documents how ptrace interprets
+	 its arguments; the watchpoint is set to watch the range defined by
+	 the user _inclusively_, as specified by the user interface.  */
+      p->addr2 = (uint64_t) addr + len;
+    }
+
+  p->version = PPC_DEBUG_CURRENT_VERSION;
+  p->trigger_type = get_trigger_type (rw);
+  p->addr = (uint64_t) addr;
 }
 
 static int
@@ -1883,32 +2063,16 @@ ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 			     struct expression *cond)
 {
   struct lwp_info *lp;
-  ptid_t ptid;
   int ret = -1;
 
   if (have_ptrace_booke_interface ())
     {
       struct ppc_hw_breakpoint p;
-      CORE_ADDR data_value;
 
-      if (cond && can_use_watchpoint_cond_accel ()
-	  && check_condition (addr, cond, &data_value))
-	calculate_dvc (addr, len, data_value, &p.condition_mode,
-		       &p.condition_value);
-      else
-	{
-	  p.condition_mode  = PPC_BREAKPOINT_CONDITION_NONE;
-	  p.condition_value = 0;
-	}
+      create_watchpoint_request (&p, addr, len, rw, cond, 1);
 
-      p.version         = PPC_DEBUG_CURRENT_VERSION;
-      p.trigger_type    = get_trigger_type (rw);
-      p.addr_mode       = PPC_BREAKPOINT_MODE_EXACT;
-      p.addr            = (uint64_t) addr;
-      p.addr2           = 0;
-
-      ALL_LWPS (lp, ptid)
-	booke_insert_point (&p, TIDGET (ptid));
+      ALL_LWPS (lp)
+	booke_insert_point (&p, TIDGET (lp->ptid));
 
       ret = 0;
     }
@@ -1921,14 +2085,14 @@ ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 	{
 	  /* PowerPC 440 requires only the read/write flags to be passed
 	     to the kernel.  */
-	  read_mode  = 1;
+	  read_mode = 1;
 	  write_mode = 2;
 	}
       else
 	{
 	  /* PowerPC 970 and other DABR-based processors are required to pass
 	     the Breakpoint Translation bit together with the flags.  */
-	  read_mode  = 5;
+	  read_mode = 5;
 	  write_mode = 6;
 	}
 
@@ -1951,8 +2115,8 @@ ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 
       saved_dabr_value = dabr_value;
 
-      ALL_LWPS (lp, ptid)
-	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (ptid), 0,
+      ALL_LWPS (lp)
+	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (lp->ptid), 0,
 		    saved_dabr_value) < 0)
 	  return -1;
 
@@ -1967,40 +2131,24 @@ ppc_linux_remove_watchpoint (CORE_ADDR addr, int len, int rw,
 			     struct expression *cond)
 {
   struct lwp_info *lp;
-  ptid_t ptid;
   int ret = -1;
 
   if (have_ptrace_booke_interface ())
     {
       struct ppc_hw_breakpoint p;
-      CORE_ADDR data_value;
 
-      if (cond && booke_debug_info.num_condition_regs > 0
-	  && check_condition (addr, cond, &data_value))
-	calculate_dvc (addr, len, data_value, &p.condition_mode,
-		       &p.condition_value);
-      else
-	{
-	  p.condition_mode  = PPC_BREAKPOINT_CONDITION_NONE;
-	  p.condition_value = 0;
-	}
+      create_watchpoint_request (&p, addr, len, rw, cond, 0);
 
-      p.version         = PPC_DEBUG_CURRENT_VERSION;
-      p.trigger_type    = get_trigger_type (rw);
-      p.addr_mode       = PPC_BREAKPOINT_MODE_EXACT;
-      p.addr            = (uint64_t) addr;
-      p.addr2           = 0;
-
-      ALL_LWPS (lp, ptid)
-	booke_remove_point (&p, TIDGET (ptid));
+      ALL_LWPS (lp)
+	booke_remove_point (&p, TIDGET (lp->ptid));
 
       ret = 0;
     }
   else
     {
       saved_dabr_value = 0;
-      ALL_LWPS (lp, ptid)
-	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (ptid), 0,
+      ALL_LWPS (lp)
+	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (lp->ptid), 0,
 		    saved_dabr_value) < 0)
 	  return -1;
 
@@ -2011,9 +2159,9 @@ ppc_linux_remove_watchpoint (CORE_ADDR addr, int len, int rw,
 }
 
 static void
-ppc_linux_new_thread (ptid_t ptid)
+ppc_linux_new_thread (struct lwp_info *lp)
 {
-  int tid = TIDGET (ptid);
+  int tid = TIDGET (lp->ptid);
 
   if (have_ptrace_booke_interface ())
     {
@@ -2024,11 +2172,11 @@ ppc_linux_new_thread (ptid_t ptid)
       if (VEC_empty (thread_points_p, ppc_threads))
 	return;
 
-      /* Get a list of breakpoints from any thread. */
+      /* Get a list of breakpoints from any thread.  */
       p = VEC_last (thread_points_p, ppc_threads);
       hw_breaks = p->hw_breaks;
 
-      /* Copy that thread's breakpoints and watchpoints to the new thread. */
+      /* Copy that thread's breakpoints and watchpoints to the new thread.  */
       for (i = 0; i < max_slots_number; i++)
 	if (hw_breaks[i].hw_break)
 	  booke_insert_point (hw_breaks[i].hw_break, tid);
@@ -2073,12 +2221,13 @@ ppc_linux_thread_exit (struct thread_info *tp, int silent)
 static int
 ppc_linux_stopped_data_address (struct target_ops *target, CORE_ADDR *addr_p)
 {
-  struct siginfo *siginfo_p;
+  siginfo_t siginfo;
 
-  siginfo_p = linux_nat_get_siginfo (inferior_ptid);
+  if (!linux_nat_get_siginfo (inferior_ptid, &siginfo))
+    return 0;
 
-  if (siginfo_p->si_signo != SIGTRAP
-      || (siginfo_p->si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
+  if (siginfo.si_signo != SIGTRAP
+      || (siginfo.si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
     return 0;
 
   if (have_ptrace_booke_interface ())
@@ -2087,7 +2236,7 @@ ppc_linux_stopped_data_address (struct target_ops *target, CORE_ADDR *addr_p)
       struct thread_points *t;
       struct hw_break_tuple *hw_breaks;
       /* The index (or slot) of the *point is passed in the si_errno field.  */
-      int slot = siginfo_p->si_errno;
+      int slot = siginfo.si_errno;
 
       t = booke_find_thread_points_by_tid (TIDGET (inferior_ptid), 0);
 
@@ -2104,7 +2253,7 @@ ppc_linux_stopped_data_address (struct target_ops *target, CORE_ADDR *addr_p)
 	}
     }
 
-  *addr_p = (CORE_ADDR) (uintptr_t) siginfo_p->si_addr;
+  *addr_p = (CORE_ADDR) (uintptr_t) siginfo.si_addr;
   return 1;
 }
 
@@ -2132,18 +2281,38 @@ ppc_linux_watchpoint_addr_within_range (struct target_ops *target,
 
   addr &= ~mask;
 
-  /* Check whether [start, start+length-1] intersects [addr, addr+mask]. */
+  /* Check whether [start, start+length-1] intersects [addr, addr+mask].  */
   return start <= addr + mask && start + length - 1 >= addr;
+}
+
+/* Return the number of registers needed for a masked hardware watchpoint.  */
+
+static int
+ppc_linux_masked_watch_num_registers (struct target_ops *target,
+				      CORE_ADDR addr, CORE_ADDR mask)
+{
+  if (!have_ptrace_booke_interface ()
+	   || (booke_debug_info.features & PPC_DEBUG_FEATURE_DATA_BP_MASK) == 0)
+    return -1;
+  else if ((mask & 0xC0000000) != 0xC0000000)
+    {
+      warning (_("The given mask covers kernel address space "
+		 "and cannot be used.\n"));
+
+      return -2;
+    }
+  else
+    return 2;
 }
 
 static void
 ppc_linux_store_inferior_registers (struct target_ops *ops,
 				    struct regcache *regcache, int regno)
 {
-  /* Overload thread id onto process id */
+  /* Overload thread id onto process id.  */
   int tid = TIDGET (inferior_ptid);
 
-  /* No thread id, just use process id */
+  /* No thread id, just use process id.  */
   if (tid == 0)
     tid = PIDGET (inferior_ptid);
 
@@ -2155,7 +2324,7 @@ ppc_linux_store_inferior_registers (struct target_ops *ops,
 
 /* Functions for transferring registers between a gregset_t or fpregset_t
    (see sys/ucontext.h) and gdb's regcache.  The word size is that used
-   by the ptrace interface, not the current program's ABI.  eg. If a
+   by the ptrace interface, not the current program's ABI.  Eg. if a
    powerpc64-linux gdb is being used to debug a powerpc32-linux app, we
    read or write 64-bit gregsets.  This is to suit the host libthread_db.  */
 
@@ -2295,7 +2464,7 @@ ppc_linux_read_description (struct target_ops *ops)
     }
 
   /* Power ISA 2.05 (implemented by Power 6 and newer processors) increases
-     the FPSCR from 32 bits to 64 bits. Even though Power 7 supports this
+     the FPSCR from 32 bits to 64 bits.  Even though Power 7 supports this
      ISA version, it doesn't have PPC_FEATURE_ARCH_2_05 set, only
      PPC_FEATURE_ARCH_2_06.  Since for now the only bits used in the higher
      half of the register are for Decimal Floating Point, we check if that
@@ -2313,7 +2482,8 @@ ppc_linux_read_description (struct target_ops *ops)
       else if (vsx)
 	return isa205? tdesc_powerpc_isa205_vsx64l : tdesc_powerpc_vsx64l;
       else if (altivec)
-	return isa205? tdesc_powerpc_isa205_altivec64l : tdesc_powerpc_altivec64l;
+	return isa205
+	  ? tdesc_powerpc_isa205_altivec64l : tdesc_powerpc_altivec64l;
 
       return isa205? tdesc_powerpc_isa205_64l : tdesc_powerpc_64l;
     }
@@ -2349,10 +2519,15 @@ _initialize_ppc_linux_nat (void)
   t->to_region_ok_for_hw_watchpoint = ppc_linux_region_ok_for_hw_watchpoint;
   t->to_insert_watchpoint = ppc_linux_insert_watchpoint;
   t->to_remove_watchpoint = ppc_linux_remove_watchpoint;
+  t->to_insert_mask_watchpoint = ppc_linux_insert_mask_watchpoint;
+  t->to_remove_mask_watchpoint = ppc_linux_remove_mask_watchpoint;
   t->to_stopped_by_watchpoint = ppc_linux_stopped_by_watchpoint;
   t->to_stopped_data_address = ppc_linux_stopped_data_address;
   t->to_watchpoint_addr_within_range = ppc_linux_watchpoint_addr_within_range;
-  t->to_can_accel_watchpoint_condition = ppc_linux_can_accel_watchpoint_condition;
+  t->to_can_accel_watchpoint_condition
+    = ppc_linux_can_accel_watchpoint_condition;
+  t->to_masked_watch_num_registers = ppc_linux_masked_watch_num_registers;
+  t->to_ranged_break_num_registers = ppc_linux_ranged_break_num_registers;
 
   t->to_read_description = ppc_linux_read_description;
   t->to_auxv_parse = ppc_linux_auxv_parse;

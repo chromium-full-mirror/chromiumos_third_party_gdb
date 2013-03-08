@@ -1,6 +1,6 @@
 /* Routines for handling XML generic OS data provided by target.
 
-   Copyright (C) 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2008-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -68,7 +68,7 @@ osdata_start_osdata (struct gdb_xml_parser *parser,
   if (data->osdata)
     gdb_xml_error (parser, _("Seen more than on osdata element"));
 
-  type = VEC_index (gdb_xml_value_s, attributes, 0)->value;
+  type = xml_find_attribute (attributes, "type")->value;
   osdata = XZALLOC (struct osdata);
   osdata->type = xstrdup (type);
   data->osdata = osdata;
@@ -95,7 +95,7 @@ osdata_start_column (struct gdb_xml_parser *parser,
                     void *user_data, VEC(gdb_xml_value_s) *attributes)
 {
   struct osdata_parsing_data *data = user_data;
-  const char *name = VEC_index (gdb_xml_value_s, attributes, 0)->value;
+  const char *name = xml_find_attribute (attributes, "name")->value;
 
   data->property_name = xstrdup (name);
 }
@@ -168,23 +168,21 @@ const struct gdb_xml_element osdata_elements[] = {
 struct osdata *
 osdata_parse (const char *xml)
 {
-  struct gdb_xml_parser *parser;
-  struct cleanup *before_deleting_result, *back_to;
+  struct cleanup *back_to;
   struct osdata_parsing_data data = { NULL };
 
-  back_to = make_cleanup (null_cleanup, NULL);
-  parser = gdb_xml_create_parser_and_cleanup (_("osdata"),
-                                             osdata_elements, &data);
-  gdb_xml_use_dtd (parser, "osdata.dtd");
+  back_to = make_cleanup (clear_parsing_data, &data);
 
-  before_deleting_result = make_cleanup (clear_parsing_data, &data);
-
-  if (gdb_xml_parse (parser, xml) == 0)
-    /* Parsed successfully, don't need to delete the result.  */
-    discard_cleanups (before_deleting_result);
+  if (gdb_xml_parse_quick (_("osdata"), "osdata.dtd",
+			   osdata_elements, xml, &data) == 0)
+    {
+      /* Parsed successfully, don't need to delete the result.  */
+      discard_cleanups (back_to);
+      return data.osdata;
+    }
 
   do_cleanups (back_to);
-  return data.osdata;
+  return NULL;
 }
 #endif
 
@@ -269,7 +267,7 @@ get_osdata (const char *type)
     }
 
   if (!osdata)
-    error (_("Can not fetch data now.\n"));
+    error (_("Can not fetch data now."));
 
   return osdata;
 }
@@ -290,31 +288,64 @@ get_osdata_column (struct osdata_item *item, const char *name)
   return NULL;
 }
 
-static void
+void
 info_osdata_command (char *type, int from_tty)
 {
+  struct ui_out *uiout = current_uiout;
   struct osdata *osdata = NULL;
-  struct osdata_item *last;
+  struct osdata_item *last = NULL;
   struct cleanup *old_chain;
-  int ncols;
-  int nprocs;
+  int ncols = 0;
+  int nrows;
+  int col_to_skip = -1;
 
   osdata = get_osdata (type);
   old_chain = make_cleanup_osdata_free (osdata);
 
-  nprocs = VEC_length (osdata_item_s, osdata->items);
+  nrows = VEC_length (osdata_item_s, osdata->items);
 
-  if (!type && nprocs == 0)
+  if (!type && nrows == 0)
     error (_("Available types of OS data not reported."));
+  
+  if (!VEC_empty (osdata_item_s, osdata->items))
+    {
+      last = VEC_last (osdata_item_s, osdata->items);
+      if (last->columns)
+        ncols = VEC_length (osdata_column_s, last->columns);
 
-  last = VEC_last (osdata_item_s, osdata->items);
-  if (last && last->columns)
-    ncols = VEC_length (osdata_column_s, last->columns);
-  else
-    ncols = 0;
+      /* As a special case, scan the listing of available data types
+	 for a column named "Title", and only include it with MI
+	 output; this column's normal use is for titles for interface
+	 elements like menus, and it clutters up CLI output.  */
+      if (!type && !ui_out_is_mi_like_p (uiout))
+	{
+	  struct osdata_column *col;
+	  int ix;
 
-  make_cleanup_ui_out_table_begin_end (uiout, ncols, nprocs,
+	  for (ix = 0;
+	       VEC_iterate (osdata_column_s, last->columns, ix, col);
+	       ix++)
+	    {
+	      if (strcmp (col->name, "Title") == 0)
+		col_to_skip = ix;
+	    }
+	  /* Be sure to reduce the total column count, otherwise
+	     internal errors ensue.  */
+	  if (col_to_skip >= 0)
+	    --ncols;
+	}
+    }
+
+  make_cleanup_ui_out_table_begin_end (uiout, ncols, nrows,
 				       "OSDataTable");
+
+  /* With no columns/items, we just output an empty table, but we
+     still output the table.  This matters for MI.  */
+  if (ncols == 0)
+    {
+      do_cleanups (old_chain);
+      return;
+    }
 
   if (last && last->columns)
     {
@@ -325,13 +356,21 @@ info_osdata_command (char *type, int from_tty)
           VEC_iterate (osdata_column_s, last->columns,
                        ix, col);
           ix++)
-       ui_out_table_header (uiout, 10, ui_left,
-                            col->name, col->name);
+	{
+	  char col_name[32];
+
+	  if (ix == col_to_skip)
+	    continue;
+
+	  snprintf (col_name, 32, "col%d", ix);
+	  ui_out_table_header (uiout, 10, ui_left,
+			       col_name, col->name);
+        }
     }
 
   ui_out_table_body (uiout);
 
-  if (nprocs != 0)
+  if (nrows != 0)
     {
       struct osdata_item *item;
       int ix_items;
@@ -342,20 +381,25 @@ info_osdata_command (char *type, int from_tty)
           ix_items++)
        {
          struct cleanup *old_chain;
-         struct ui_stream *stb;
          int ix_cols;
          struct osdata_column *col;
 
-         stb = ui_out_stream_new (uiout);
-         old_chain = make_cleanup_ui_out_stream_delete (stb);
-         make_cleanup_ui_out_tuple_begin_end (uiout, "item");
+         old_chain = make_cleanup_ui_out_tuple_begin_end (uiout, "item");
 
          for (ix_cols = 0;
               VEC_iterate (osdata_column_s, item->columns,
                            ix_cols, col);
               ix_cols++)
-           ui_out_field_string (uiout, col->name, col->value);
+	   {
+	     char col_name[32];
 
+	     if (ix_cols == col_to_skip)
+	       continue;
+
+	     snprintf (col_name, 32, "col%d", ix_cols);
+	     ui_out_field_string (uiout, col_name, col->value);
+	   }
+	 
          do_cleanups (old_chain);
 
          ui_out_text (uiout, "\n");

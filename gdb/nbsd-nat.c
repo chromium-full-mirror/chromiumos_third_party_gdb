@@ -1,6 +1,6 @@
 /* Native-dependent code for NetBSD.
 
-   Copyright (C) 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2006-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -23,7 +23,7 @@
 
 #include "nbsd-nat.h"
 
-/* Return a the name of file that can be opened to get the symbols for
+/* Return the name of a file that can be opened to get the symbols for
    the child process identified by PID.  */
 
 char *

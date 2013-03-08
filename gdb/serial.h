@@ -1,6 +1,6 @@
 /* Remote serial support interface definitions for GDB, the GNU Debugger.
-   Copyright (C) 1992, 1993, 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2004,
-   2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1992-1996, 1998-2001, 2004-2012 Free Software
+   Foundation, Inc.
 
    This file is part of GDB.
 
@@ -37,12 +37,17 @@ typedef void *serial_ttystate;
 struct serial;
 
 /* Try to open NAME.  Returns a new `struct serial *' on success, NULL
-   on failure. Note that some open calls can block and, if possible, 
-   should be  written to be non-blocking, with calls to ui_look_hook 
-   so they can be cancelled. An async interface for open could be
-   added to GDB if necessary.  */
+   on failure.  The new serial object has a reference count of 1.
+   Note that some open calls can block and, if possible, should be
+   written to be non-blocking, with calls to ui_look_hook so they can
+   be cancelled.  An async interface for open could be added to GDB if
+   necessary.  */
 
 extern struct serial *serial_open (const char *name);
+
+/* Returns true if SCB is open.  */
+
+extern int serial_is_open (struct serial *scb);
 
 /* Find an already opened serial stream using a file handle.  */
 
@@ -52,9 +57,30 @@ extern struct serial *serial_for_fd (int fd);
 
 extern struct serial *serial_fdopen (const int fd);
 
-/* Push out all buffers, close the device and destroy SCB.  */
+/* Push out all buffers, close the device and unref SCB.  */
 
 extern void serial_close (struct serial *scb);
+
+/* Increment reference count of SCB.  */
+
+extern void serial_ref (struct serial *scb);
+
+/* Decrement reference count of SCB.  */
+
+extern void serial_unref (struct serial *scb);
+
+/* Create a pipe, and put the read end in files[0], and the write end
+   in filde[1].  Returns 0 for success, negative value for error (in
+   which case errno contains the error).  */
+
+extern int gdb_pipe (int fildes[2]);
+
+/* Create a pipe with each end wrapped in a `struct serial' interface.
+   Put the read end in scbs[0], and the write end in scbs[1].  Returns
+   0 for success, negative value for error (in which case errno
+   contains the error).  */
+
+extern int serial_pipe (struct serial *scbs[2]);
 
 /* Push out all buffers and destroy SCB without closing the device.  */
 
@@ -62,7 +88,7 @@ extern void serial_un_fdopen (struct serial *scb);
 
 /* Read one char from the serial device with TIMEOUT seconds to wait
    or -1 to wait forever.  Use timeout of 0 to effect a poll.
-   Infinite waits are not permitted. Returns unsigned char if ok, else
+   Infinite waits are not permitted.  Returns unsigned char if ok, else
    one of the following codes.  Note that all error return-codes are
    guaranteed to be < 0.  */
 
@@ -116,6 +142,12 @@ extern void serial_raw (struct serial *scb);
 
 extern serial_ttystate serial_get_tty_state (struct serial *scb);
 
+/* Return a pointer to a newly malloc'd ttystate containing a copy
+   of the state in TTYSTATE.  */
+
+extern serial_ttystate serial_copy_tty_state (struct serial *scb,
+					      serial_ttystate ttystate);
+
 /* Set the state of the tty to TTYSTATE.  The change is immediate.
    When changing to or from raw mode, input might be discarded.
    Returns 0 for success, negative value for error (in which case
@@ -124,10 +156,12 @@ extern serial_ttystate serial_get_tty_state (struct serial *scb);
 extern int serial_set_tty_state (struct serial *scb, serial_ttystate ttystate);
 
 /* printf_filtered a user-comprehensible description of ttystate on
-   the specified STREAM. FIXME: At present this sends output to the
+   the specified STREAM.  FIXME: At present this sends output to the
    default stream - GDB_STDOUT.  */
 
-extern void serial_print_tty_state (struct serial *scb, serial_ttystate ttystate, struct ui_file *);
+extern void serial_print_tty_state (struct serial *scb,
+				    serial_ttystate ttystate,
+				    struct ui_file *);
 
 /* Set the tty state to NEW_TTYSTATE, where OLD_TTYSTATE is the
    current state (generally obtained from a recent call to
@@ -135,7 +169,9 @@ extern void serial_print_tty_state (struct serial *scb, serial_ttystate ttystate
    This means that we never switch in or out of raw mode, even if
    NEW_TTYSTATE specifies a switch.  */
 
-extern int serial_noflush_set_tty_state (struct serial *scb, serial_ttystate new_ttystate, serial_ttystate old_ttystate);
+extern int serial_noflush_set_tty_state (struct serial *scb,
+					 serial_ttystate new_ttystate,
+					 serial_ttystate old_ttystate);
 
 /* Set the baudrate to the decimal value supplied.  Returns 0 for
    success, -1 for failure.  */
@@ -153,11 +189,11 @@ extern int serial_setstopbits (struct serial *scb, int num);
 
 /* Asynchronous serial interface: */
 
-/* Can the serial device support asynchronous mode? */
+/* Can the serial device support asynchronous mode?  */
 
 extern int serial_can_async_p (struct serial *scb);
 
-/* Has the serial device been put in asynchronous mode? */
+/* Has the serial device been put in asynchronous mode?  */
 
 extern int serial_is_async_p (struct serial *scb);
 
@@ -166,11 +202,12 @@ extern int serial_is_async_p (struct serial *scb);
    callback.  */
 
 typedef void (serial_event_ftype) (struct serial *scb, void *context);
-extern void serial_async (struct serial *scb, serial_event_ftype *handler, void *context);
+extern void serial_async (struct serial *scb,
+			  serial_event_ftype *handler, void *context);
 
 /* Provide direct access to the underlying FD (if any) used to
    implement the serial device.  This interface is clearly
-   deprecated. Will call internal_error() if the operation isn't
+   deprecated.  Will call internal_error() if the operation isn't
    applicable to the current serial device.  */
 
 extern int deprecated_serial_fd (struct serial *scb);
@@ -185,10 +222,14 @@ extern void serial_debug (struct serial *scb, int debug_p);
 extern int serial_debug_p (struct serial *scb);
 
 
-/* Details of an instance of a serial object */
+/* Details of an instance of a serial object.  */
 
 struct serial
   {
+    /* serial objects are ref counted (but not the underlying
+       connection, just the object's lifetime in memory).  */
+    int refcnt;
+
     int fd;			/* File descriptor */
     /* File descriptor for a separate error stream that should be
        immediately forwarded to gdb_stderr.  This may be -1.
@@ -209,7 +250,6 @@ struct serial
 				   more seconds.  */
     char *name;			/* The name of the device or host */
     struct serial *next;	/* Pointer to the next `struct serial *' */
-    int refcnt;			/* Number of pointers to this block */
     int debug_p;		/* Trace this serial devices operation.  */
     int async_state;		/* Async internal state.  */
     void *async_context;	/* Async event thread's context */
@@ -222,6 +262,7 @@ struct serial_ops
     struct serial_ops *next;
     int (*open) (struct serial *, const char *name);
     void (*close) (struct serial *);
+    int (*fdopen) (struct serial *, int fd);
     int (*readchar) (struct serial *, int timeout);
     int (*write) (struct serial *, const char *str, int len);
     /* Discard pending output */
@@ -231,6 +272,7 @@ struct serial_ops
     int (*send_break) (struct serial *);
     void (*go_raw) (struct serial *);
     serial_ttystate (*get_tty_state) (struct serial *);
+    serial_ttystate (*copy_tty_state) (struct serial *, serial_ttystate);
     int (*set_tty_state) (struct serial *, serial_ttystate);
     void (*print_tty_state) (struct serial *, serial_ttystate,
 			     struct ui_file *);
@@ -238,7 +280,7 @@ struct serial_ops
 				  serial_ttystate);
     int (*setbaudrate) (struct serial *, int rate);
     int (*setstopbits) (struct serial *, int num);
-    /* Wait for output to drain */
+    /* Wait for output to drain.  */
     int (*drain_output) (struct serial *);
     /* Change the serial device into/out of asynchronous mode, call
        the specified function when ever there is something
@@ -252,7 +294,7 @@ struct serial_ops
     int (*write_prim)(struct serial *scb, const void *buf, size_t count);
     /* Return that number of bytes that can be read from FD
        without blocking.  Return value of -1 means that the
-       the read will not block even if less that requested bytes
+       read will not block even if less that requested bytes
        are available.  */
     int (*avail)(struct serial *scb, int fd);
 
@@ -265,11 +307,11 @@ struct serial_ops
 #endif /* USE_WIN32API */
   };
 
-/* Add a new serial interface to the interface list */
+/* Add a new serial interface to the interface list.  */
 
 extern void serial_add_interface (struct serial_ops * optable);
 
-/* File in which to record the remote debugging session */
+/* File in which to record the remote debugging session.  */
 
 extern void serial_log_command (const char *);
 

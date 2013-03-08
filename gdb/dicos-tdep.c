@@ -1,6 +1,6 @@
 /* Target-dependent, architecture-independent code for DICOS, for GDB.
 
-   Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -43,8 +43,8 @@ dicos_init_abi (struct gdbarch *gdbarch)
 
   /* There's no (standard definition of) entry point or a guaranteed
      text location with a symbol where to place the call dummy, so we
-     put it on the stack.  */
-  set_gdbarch_call_dummy_location (gdbarch, ON_STACK);
+     need it on the stack.  Rely on i386_gdbarch_init used also for
+     amd64 to set up ON_STACK inferior calls.  */
 
   /* DICOS rewinds the PC itself.  */
   set_gdbarch_decr_pc_after_break (gdbarch, 0);
@@ -81,7 +81,8 @@ dicos_load_module_p (bfd *abfd, int header_size)
   storage_needed = bfd_get_symtab_upper_bound (abfd);
   if (storage_needed < 0)
     {
-      warning (_("Can't read elf symbols from %s: %s"), bfd_get_filename (abfd),
+      warning (_("Can't read elf symbols from %s: %s"),
+	       bfd_get_filename (abfd),
 	       bfd_errmsg (bfd_get_error ()));
       return 0;
     }

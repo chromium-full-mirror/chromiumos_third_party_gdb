@@ -1,6 +1,6 @@
 /* D language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 2005, 2006, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2005-2006, 2008-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -252,15 +252,18 @@ static const struct language_defn d_language_defn =
   c_printstr,			/* Function to print string constant.  */
   c_emit_char,			/* Print a single char.  */
   c_print_type,			/* Print a type using appropriate syntax.  */
-  c_print_typedef,		/* Print a typedef using appropriate syntax.  */
+  c_print_typedef,		/* Print a typedef using appropriate
+				   syntax.  */
   d_val_print,			/* Print a value using appropriate syntax.  */
   c_value_print,		/* Print a top-level value.  */
+  default_read_var_value,	/* la_read_var_value */
   NULL,				/* Language specific skip_trampoline.  */
   "this",
   basic_lookup_symbol_nonlocal, 
   basic_lookup_transparent_type,
   d_demangle,			/* Language specific symbol demangler.  */
-  NULL,				/* Language specific class_name_from_physname.  */
+  NULL,				/* Language specific
+				   class_name_from_physname.  */
   d_op_print_tab,		/* Expression operators for printing.  */
   1,				/* C-style arrays.  */
   0,				/* String lower bound.  */
@@ -270,8 +273,13 @@ static const struct language_defn d_language_defn =
   default_print_array_index,
   default_pass_by_reference,
   c_get_string,
+  NULL,				/* la_get_symbol_name_cmp */
+  iterate_over_symbols,
   LANG_MAGIC
 };
+
+/* Provide a prototype to silence -Wmissing-prototypes.  */
+extern initialize_file_ftype _initialize_d_language;
 
 void
 _initialize_d_language (void)

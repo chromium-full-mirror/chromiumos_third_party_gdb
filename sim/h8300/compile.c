@@ -17,6 +17,7 @@
  * AND FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include "config.h"
 #include <signal.h>
 #ifdef HAVE_TIME_H
 #include <time.h>
@@ -4715,7 +4716,7 @@ sim_store_register (SIM_DESC sd, int rn, unsigned char *value, int length)
       h8_set_ticks (sd, longval);
       break;
     }
-  return -1;
+  return length;
 }
 
 int
@@ -5105,13 +5106,6 @@ sim_create_inferior (SIM_DESC sd, struct bfd *abfd, char **argv, char **env)
     }
   
   return SIM_RC_OK;
-}
-
-void
-sim_do_command (SIM_DESC sd, char *cmd)
-{
-  (*sim_callback->printf_filtered) (sim_callback,
-				    "This simulator does not accept any commands.\n");
 }
 
 void

@@ -1,5 +1,5 @@
 /* Simulator for the moxie processor
-   Copyright (C) 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2008-2012 Free Software Foundation, Inc.
    Contributed by Anthony Green
 
 This file is part of GDB, the GNU debugger.
@@ -17,6 +17,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
+#include "config.h"
+#include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
 #include "sysdep.h"

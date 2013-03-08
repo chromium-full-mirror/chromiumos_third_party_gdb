@@ -1,6 +1,6 @@
 /* Host support routines for MinGW, for GDB, the GNU debugger.
 
-   Copyright (C) 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2006-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -26,7 +26,7 @@
 
 /* The strerror() function can return NULL for errno values that are
    out of range.  Provide a "safe" version that always returns a
-   printable string. */
+   printable string.  */
 
 char *
 safe_strerror (int errnum)

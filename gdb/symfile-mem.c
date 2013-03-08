@@ -1,8 +1,7 @@
 /* Reading symbol files from memory.
 
-   Copyright (C) 1986, 1987, 1989, 1991, 1994, 1995, 1996, 1998, 2000, 2001,
-   2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1986-1987, 1989, 1991, 1994-1996, 1998, 2000-2005,
+   2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -56,6 +55,25 @@
 #include "auxv.h"
 #include "elf/common.h"
 
+/* Verify parameters of target_read_memory_bfd and target_read_memory are
+   compatible.  */
+
+gdb_static_assert (sizeof (CORE_ADDR) == sizeof (bfd_vma));
+gdb_static_assert (sizeof (gdb_byte) == sizeof (bfd_byte));
+gdb_static_assert (sizeof (ssize_t) <= sizeof (bfd_size_type));
+
+/* Provide bfd/ compatible prototype for target_read_memory.  Casting would not
+   be enough as LEN width may differ.  */
+
+static int
+target_read_memory_bfd (bfd_vma memaddr, bfd_byte *myaddr, bfd_size_type len)
+{
+  /* MYADDR must be already allocated for the LEN size so it has to fit in
+     ssize_t.  */
+  gdb_assert ((ssize_t) len == len);
+
+  return target_read_memory (memaddr, myaddr, len);
+}
 
 /* Read inferior memory at ADDR to find the header of a loaded object file
    and read its in-core symbols out of inferior memory.  TEMPL is a bfd
@@ -72,12 +90,13 @@ symbol_file_add_from_memory (struct bfd *templ, CORE_ADDR addr, char *name,
   bfd_vma loadbase;
   struct section_addr_info *sai;
   unsigned int i;
+  struct cleanup *cleanup;
 
   if (bfd_get_flavour (templ) != bfd_target_elf_flavour)
     error (_("add-symbol-file-from-memory not supported for this target"));
 
   nbfd = bfd_elf_bfd_from_remote_memory (templ, addr, &loadbase,
-					 target_read_memory);
+					 target_read_memory_bfd);
   if (nbfd == NULL)
     error (_("Failed to read a valid object file image from memory."));
 
@@ -97,7 +116,7 @@ symbol_file_add_from_memory (struct bfd *templ, CORE_ADDR addr, char *name,
     }
 
   sai = alloc_section_addr_info (bfd_count_sections (nbfd));
-  make_cleanup (xfree, sai);
+  cleanup = make_cleanup (xfree, sai);
   i = 0;
   for (sec = nbfd->sections; sec != NULL; sec = sec->next)
     if ((bfd_get_section_flags (nbfd, sec) & (SEC_ALLOC|SEC_LOAD)) != 0)
@@ -109,11 +128,12 @@ symbol_file_add_from_memory (struct bfd *templ, CORE_ADDR addr, char *name,
       }
 
   objf = symbol_file_add_from_bfd (nbfd, from_tty ? SYMFILE_VERBOSE : 0,
-                                   sai, OBJF_SHARED);
+                                   sai, OBJF_SHARED, NULL);
 
   /* This might change our ideas about frames already looked at.  */
   reinit_frame_cache ();
 
+  do_cleanups (cleanup);
   return objf;
 }
 
@@ -135,8 +155,8 @@ add_symbol_file_from_memory_command (char *args, int from_tty)
   else
     templ = exec_bfd;
   if (templ == NULL)
-    error (_("\
-Must use symbol-file or exec-file before add-symbol-file-from-memory."));
+    error (_("Must use symbol-file or exec-file "
+	     "before add-symbol-file-from-memory."));
 
   symbol_file_add_from_memory (templ, addr, NULL, from_tty);
 }
@@ -164,8 +184,8 @@ symbol_file_add_from_memory_wrapper (struct ui_out *uiout, void *data)
   return 0;
 }
 
-/* Try to add the symbols for the vsyscall page, if there is one.  This function
-   is called via the inferior_created observer.  */
+/* Try to add the symbols for the vsyscall page, if there is one.
+   This function is called via the inferior_created observer.  */
 
 static void
 add_vsyscall_page (struct target_ops *target, int from_tty)
@@ -190,9 +210,9 @@ add_vsyscall_page (struct target_ops *target, int from_tty)
 	  ``bfd_runtime'' (a BFD created using the loaded image) file
 	  format should fix this.  */
 	{
-	  warning (_("\
-Could not load vsyscall page because no executable was specified\n\
-try using the \"file\" command first."));
+	  warning (_("Could not load vsyscall page "
+		     "because no executable was specified\n"
+		     "try using the \"file\" command first."));
 	  return;
 	}
       args.bfd = bfd;
@@ -203,7 +223,7 @@ try using the \"file\" command first."));
 	 vsyscall DSO was not triggered by the user, even if the user
 	 typed "run" at the TTY.  */
       args.from_tty = 0;
-      catch_exceptions (uiout, symbol_file_add_from_memory_wrapper,
+      catch_exceptions (current_uiout, symbol_file_add_from_memory_wrapper,
 			&args, RETURN_MASK_ALL);
     }
 }
@@ -217,9 +237,11 @@ void
 _initialize_symfile_mem (void)
 {
   add_cmd ("add-symbol-file-from-memory", class_files,
-           add_symbol_file_from_memory_command, _("\
-Load the symbols out of memory from a dynamically loaded object file.\n\
-Give an expression for the address of the file's shared object file header."),
+           add_symbol_file_from_memory_command,
+	   _("Load the symbols out of memory from a "
+	     "dynamically loaded object file.\n"
+	     "Give an expression for the address "
+	     "of the file's shared object file header."),
            &cmdlist);
 
   /* Want to know of each new inferior so that its vsyscall info can

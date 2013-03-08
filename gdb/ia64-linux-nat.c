@@ -1,8 +1,7 @@
 /* Functions specific to running gdb native on IA-64 running
    GNU/Linux.
 
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-   2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1999-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -40,7 +39,7 @@
 #include <asm/ptrace_offsets.h>
 #include <sys/procfs.h>
 
-/* Prototypes for supply_gregset etc. */
+/* Prototypes for supply_gregset etc.  */
 #include "gregset.h"
 
 /* These must match the order of the register names.
@@ -51,7 +50,7 @@
 static int u_offsets[] =
   {
     /* general registers */
-    -1,		/* gr0 not available; i.e, it's always zero */
+    -1,		/* gr0 not available; i.e, it's always zero.  */
     PT_R1,
     PT_R2,
     PT_R3,
@@ -83,7 +82,7 @@ static int u_offsets[] =
     PT_R29,
     PT_R30,
     PT_R31,
-    /* gr32 through gr127 not directly available via the ptrace interface */
+    /* gr32 through gr127 not directly available via the ptrace interface.  */
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -91,7 +90,7 @@ static int u_offsets[] =
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     /* Floating point registers */
-    -1, -1,	/* f0 and f1 not available (f0 is +0.0 and f1 is +1.0) */
+    -1, -1,	/* f0 and f1 not available (f0 is +0.0 and f1 is +1.0).  */
     PT_F2,
     PT_F3,
     PT_F4,
@@ -218,7 +217,7 @@ static int u_offsets[] =
     PT_F125,
     PT_F126,
     PT_F127,
-    /* predicate registers - we don't fetch these individually */
+    /* Predicate registers - we don't fetch these individually.  */
     -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1,
@@ -236,14 +235,14 @@ static int u_offsets[] =
     PT_B5,
     PT_B6,
     PT_B7,
-    /* virtual frame pointer and virtual return address pointer */
+    /* Virtual frame pointer and virtual return address pointer.  */
     -1, -1,
     /* other registers */
     PT_PR,
     PT_CR_IIP,	/* ip */
     PT_CR_IPSR, /* psr */
     PT_CFM,	/* cfm */
-    /* kernel registers not visible via ptrace interface (?) */
+    /* kernel registers not visible via ptrace interface (?)  */
     -1, -1, -1, -1, -1, -1, -1, -1,
     /* hole */
     -1, -1, -1, -1, -1, -1, -1, -1,
@@ -252,7 +251,7 @@ static int u_offsets[] =
     PT_AR_BSPSTORE,
     PT_AR_RNAT,
     -1,
-    -1,		/* Not available: FCR, IA32 floating control register */
+    -1,		/* Not available: FCR, IA32 floating control register.  */
     -1, -1,
     -1,		/* Not available: EFLAG */
     -1,		/* Not available: CSD */
@@ -273,7 +272,7 @@ static int u_offsets[] =
     -1, -1, -1, -1, -1, -1, -1, -1, -1,
     PT_AR_PFS,
     PT_AR_LC,
-    -1,		/* Not available: EC, the Epilog Count register */
+    PT_AR_EC,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -282,7 +281,7 @@ static int u_offsets[] =
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1,
     /* nat bits - not fetched directly; instead we obtain these bits from
-       either rnat or unat or from memory. */
+       either rnat or unat or from memory.  */
     -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1,
@@ -375,7 +374,7 @@ supply_gregset (struct regcache *regcache, const gregset_t *gregsetp)
     }
 
   /* FIXME: NAT collection bits are at index 32; gotta deal with these
-     somehow... */
+     somehow...  */
 
   regcache_raw_supply (regcache, IA64_PR_REGNUM, regp + 33);
 
@@ -415,7 +414,7 @@ fill_gregset (const struct regcache *regcache, gregset_t *gregsetp, int regno)
       COPY_REG (regi - IA64_GR0_REGNUM, regi);
     }
 
-  /* FIXME: NAT collection bits at index 32? */
+  /* FIXME: NAT collection bits at index 32?  */
 
   COPY_REG (33, IA64_PR_REGNUM);
 
@@ -441,15 +440,27 @@ fill_gregset (const struct regcache *regcache, gregset_t *gregsetp, int regno)
 
 /*  Given a pointer to a floating point register set in /proc format
    (fpregset_t *), unpack the register contents and supply them as gdb's
-   idea of the current floating point register values. */
+   idea of the current floating point register values.  */
 
 void
 supply_fpregset (struct regcache *regcache, const fpregset_t *fpregsetp)
 {
   int regi;
   const char *from;
+  const gdb_byte f_zero[16] = { 0 };
+  const gdb_byte f_one[16] =
+    { 0, 0, 0, 0, 0, 0, 0, 0x80, 0xff, 0xff, 0, 0, 0, 0, 0, 0 };
 
-  for (regi = IA64_FR0_REGNUM; regi <= IA64_FR127_REGNUM; regi++)
+  /* Kernel generated cores have fr1==0 instead of 1.0.  Older GDBs
+     did the same.  So ignore whatever might be recorded in fpregset_t
+     for fr0/fr1 and always supply their expected values.  */
+
+  /* fr0 is always read as zero.  */
+  regcache_raw_supply (regcache, IA64_FR0_REGNUM, f_zero);
+  /* fr1 is always read as one (1.0).  */
+  regcache_raw_supply (regcache, IA64_FR1_REGNUM, f_one);
+
+  for (regi = IA64_FR2_REGNUM; regi <= IA64_FR127_REGNUM; regi++)
     {
       from = (const char *) &((*fpregsetp)[regi - IA64_FR0_REGNUM]);
       regcache_raw_supply (regcache, regi, from);
@@ -459,7 +470,7 @@ supply_fpregset (struct regcache *regcache, const fpregset_t *fpregsetp)
 /*  Given a pointer to a floating point register set in /proc format
    (fpregset_t *), update the register specified by REGNO from gdb's idea
    of the current floating point register set.  If REGNO is -1, update
-   them all. */
+   them all.  */
 
 void
 fill_fpregset (const struct regcache *regcache,
@@ -488,7 +499,7 @@ enable_watchpoints_in_psr (ptid_t ptid)
   if (!(psr & IA64_PSR_DB))
     {
       psr |= IA64_PSR_DB;	/* Set the db bit - this enables hardware
-			           watchpoints and breakpoints. */
+			           watchpoints and breakpoints.  */
       regcache_cooked_write_unsigned (regcache, IA64_PSR_REGNUM, psr);
     }
 }
@@ -508,7 +519,8 @@ store_debug_register (ptid_t ptid, int idx, long val)
 }
 
 static void
-store_debug_register_pair (ptid_t ptid, int idx, long *dbr_addr, long *dbr_mask)
+store_debug_register_pair (ptid_t ptid, int idx, long *dbr_addr,
+			   long *dbr_mask)
 {
   if (dbr_addr)
     store_debug_register (ptid, 2 * idx, *dbr_addr);
@@ -534,7 +546,6 @@ ia64_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 			      struct expression *cond)
 {
   struct lwp_info *lp;
-  ptid_t ptid;
   int idx;
   long dbr_addr, dbr_mask;
   int max_watchpoints = 4;
@@ -547,7 +558,7 @@ ia64_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
       dbr_mask = debug_registers[idx * 2 + 1];
       if ((dbr_mask & (0x3UL << 62)) == 0)
 	{
-	  /* Exit loop if both r and w bits clear */
+	  /* Exit loop if both r and w bits clear.  */
 	  break;
 	}
     }
@@ -575,10 +586,10 @@ ia64_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 
   debug_registers[2 * idx] = dbr_addr;
   debug_registers[2 * idx + 1] = dbr_mask;
-  ALL_LWPS (lp, ptid)
+  ALL_LWPS (lp)
     {
-      store_debug_register_pair (ptid, idx, &dbr_addr, &dbr_mask);
-      enable_watchpoints_in_psr (ptid);
+      store_debug_register_pair (lp->ptid, idx, &dbr_addr, &dbr_mask);
+      enable_watchpoints_in_psr (lp->ptid);
     }
 
   return 0;
@@ -602,15 +613,14 @@ ia64_linux_remove_watchpoint (CORE_ADDR addr, int len, int type,
       if ((dbr_mask & (0x3UL << 62)) && addr == (CORE_ADDR) dbr_addr)
 	{
 	  struct lwp_info *lp;
-	  ptid_t ptid;
 
 	  debug_registers[2 * idx] = 0;
 	  debug_registers[2 * idx + 1] = 0;
 	  dbr_addr = 0;
 	  dbr_mask = 0;
 
-	  ALL_LWPS (lp, ptid)
-	    store_debug_register_pair (ptid, idx, &dbr_addr, &dbr_mask);
+	  ALL_LWPS (lp)
+	    store_debug_register_pair (lp->ptid, idx, &dbr_addr, &dbr_mask);
 
 	  return 0;
 	}
@@ -619,7 +629,7 @@ ia64_linux_remove_watchpoint (CORE_ADDR addr, int len, int type,
 }
 
 static void
-ia64_linux_new_thread (ptid_t ptid)
+ia64_linux_new_thread (struct lwp_info *lp)
 {
   int i, any;
 
@@ -628,32 +638,33 @@ ia64_linux_new_thread (ptid_t ptid)
     {
       if (debug_registers[i] != 0)
 	any = 1;
-      store_debug_register (ptid, i, debug_registers[i]);
+      store_debug_register (lp->ptid, i, debug_registers[i]);
     }
 
   if (any)
-    enable_watchpoints_in_psr (ptid);
+    enable_watchpoints_in_psr (lp->ptid);
 }
 
 static int
 ia64_linux_stopped_data_address (struct target_ops *ops, CORE_ADDR *addr_p)
 {
   CORE_ADDR psr;
-  struct siginfo *siginfo_p;
+  siginfo_t siginfo;
   struct regcache *regcache = get_current_regcache ();
 
-  siginfo_p = linux_nat_get_siginfo (inferior_ptid);
+  if (!linux_nat_get_siginfo (inferior_ptid, &siginfo))
+    return 0;
 
-  if (siginfo_p->si_signo != SIGTRAP
-      || (siginfo_p->si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
+  if (siginfo.si_signo != SIGTRAP
+      || (siginfo.si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
     return 0;
 
   regcache_cooked_read_unsigned (regcache, IA64_PSR_REGNUM, &psr);
   psr |= IA64_PSR_DD;	/* Set the dd bit - this will disable the watchpoint
-                           for the next instruction */
+                           for the next instruction.  */
   regcache_cooked_write_unsigned (regcache, IA64_PSR_REGNUM, psr);
 
-  *addr_p = (CORE_ADDR)siginfo_p->si_addr;
+  *addr_p = (CORE_ADDR) siginfo.si_addr;
   return 1;
 }
 
@@ -681,6 +692,37 @@ ia64_linux_fetch_register (struct regcache *regcache, int regnum)
   size_t size;
   PTRACE_TYPE_RET *buf;
   int pid, i;
+
+  /* r0 cannot be fetched but is always zero.  */
+  if (regnum == IA64_GR0_REGNUM)
+    {
+      const gdb_byte zero[8] = { 0 };
+
+      gdb_assert (sizeof (zero) == register_size (gdbarch, regnum));
+      regcache_raw_supply (regcache, regnum, zero);
+      return;
+    }
+
+  /* fr0 cannot be fetched but is always zero.  */
+  if (regnum == IA64_FR0_REGNUM)
+    {
+      const gdb_byte f_zero[16] = { 0 };
+
+      gdb_assert (sizeof (f_zero) == register_size (gdbarch, regnum));
+      regcache_raw_supply (regcache, regnum, f_zero);
+      return;
+    }
+
+  /* fr1 cannot be fetched but is always one (1.0).  */
+  if (regnum == IA64_FR1_REGNUM)
+    {
+      const gdb_byte f_one[16] =
+	{ 0, 0, 0, 0, 0, 0, 0, 0x80, 0xff, 0xff, 0, 0, 0, 0, 0, 0 };
+
+      gdb_assert (sizeof (f_one) == register_size (gdbarch, regnum));
+      regcache_raw_supply (regcache, regnum, f_one);
+      return;
+    }
 
   if (ia64_cannot_fetch_register (gdbarch, regnum))
     {
@@ -792,8 +834,8 @@ ia64_linux_store_registers (struct target_ops *ops,
 
 
 static LONGEST (*super_xfer_partial) (struct target_ops *, enum target_object,
-				      const char *, gdb_byte *, const gdb_byte *,
-				      ULONGEST, LONGEST);
+				      const char *, gdb_byte *,
+				      const gdb_byte *, ULONGEST, LONGEST);
 
 static LONGEST 
 ia64_linux_xfer_partial (struct target_ops *ops,
@@ -807,6 +849,18 @@ ia64_linux_xfer_partial (struct target_ops *ops,
 
   return super_xfer_partial (ops, object, annex, readbuf, writebuf,
 			     offset, len);
+}
+
+/* For break.b instruction ia64 CPU forgets the immediate value and generates
+   SIGILL with ILL_ILLOPC instead of more common SIGTRAP with TRAP_BRKPT.
+   ia64 does not use gdbarch_decr_pc_after_break so we do not have to make any
+   difference for the signals here.  */
+
+static int
+ia64_linux_status_is_event (int status)
+{
+  return WIFSTOPPED (status) && (WSTOPSIG (status) == SIGTRAP
+				 || WSTOPSIG (status) == SIGILL);
 }
 
 void _initialize_ia64_linux_nat (void);
@@ -836,7 +890,7 @@ _initialize_ia64_linux_nat (void)
      This PSR bit is set in ia64_linux_stopped_by_watchpoint when the
      code there has determined that a hardware watchpoint has indeed
      been hit.  The CPU will then be able to execute one instruction
-     without triggering a watchpoint. */
+     without triggering a watchpoint.  */
 
   t->to_have_steppable_watchpoint = 1;
   t->to_can_use_hw_breakpoint = ia64_linux_can_use_hw_breakpoint;
@@ -848,4 +902,5 @@ _initialize_ia64_linux_nat (void)
   /* Register the target.  */
   linux_nat_add_target (t);
   linux_nat_set_new_thread (t, ia64_linux_new_thread);
+  linux_nat_set_status_is_event (t, ia64_linux_status_is_event);
 }

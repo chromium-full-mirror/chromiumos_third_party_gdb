@@ -1,7 +1,6 @@
 /* Target-dependent code for the Motorola 88000 series.
 
-   Copyright (C) 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2004-2005, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -68,7 +67,7 @@ m88k_register_name (struct gdbarch *gdbarch, int regnum)
 }
 
 /* Return the GDB type object for the "standard" data type of data in
-   register REGNUM. */
+   register REGNUM.  */
 
 static struct type *
 m88k_register_type (struct gdbarch *gdbarch, int regnum)
@@ -384,7 +383,7 @@ m88k_dummy_id (struct gdbarch *arch, struct frame_info *this_frame)
    from WRITEBUF into REGCACHE.  */
 
 static enum return_value_convention
-m88k_return_value (struct gdbarch *gdbarch, struct type *func_type,
+m88k_return_value (struct gdbarch *gdbarch, struct value *function,
 		   struct type *type, struct regcache *regcache,
 		   gdb_byte *readbuf, const gdb_byte *writebuf)
 {
@@ -749,6 +748,7 @@ m88k_frame_prev_register (struct frame_info *this_frame,
 static const struct frame_unwind m88k_frame_unwind =
 {
   NORMAL_FRAME,
+  default_frame_unwind_stop_reason,
   m88k_frame_this_id,
   m88k_frame_prev_register,
   NULL,
@@ -859,7 +859,7 @@ m88k_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_push_dummy_call (gdbarch, m88k_push_dummy_call);
   set_gdbarch_dummy_id (gdbarch, m88k_dummy_id);
 
-  /* Return value info */
+  /* Return value info.  */
   set_gdbarch_return_value (gdbarch, m88k_return_value);
 
   set_gdbarch_addr_bits_remove (gdbarch, m88k_addr_bits_remove);

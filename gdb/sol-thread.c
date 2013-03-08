@@ -1,7 +1,6 @@
 /* Solaris threads debugging interface.
 
-   Copyright (C) 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1996-2005, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -70,9 +69,7 @@
 
 struct target_ops sol_thread_ops;
 
-extern char *procfs_pid_to_str (struct target_ops *ops, ptid_t ptid);
-
-/* Prototypes for supply_gregset etc. */
+/* Prototypes for supply_gregset etc.  */
 #include "gregset.h"
 
 /* This struct is defined by us, but mainly used for the proc_service
@@ -204,7 +201,7 @@ td_err_string (td_err_e errcode)
   return buf;
 }
 
-/* Return the the libthread_db state string assicoated with STATECODE.
+/* Return the libthread_db state string assicoated with STATECODE.
    If STATECODE is unknown, return an appropriate message.  */
 
 static char *
@@ -348,7 +345,7 @@ sol_thread_detach (struct target_ops *ops, char *args, int from_tty)
 
 static void
 sol_thread_resume (struct target_ops *ops,
-		   ptid_t ptid, int step, enum target_signal signo)
+		   ptid_t ptid, int step, enum gdb_signal signo)
 {
   struct cleanup *old_chain;
   struct target_ops *beneath = find_target_beneath (ops);
@@ -764,7 +761,7 @@ sol_thread_alive (struct target_ops *ops, ptid_t ptid)
    Which one you have depends on the Solaris version and what patches
    you've applied.  On the theory that there are only two major
    variants, we have configure check the prototype of ps_pdwrite (),
-   and use that info to make appropriate typedefs here. */
+   and use that info to make appropriate typedefs here.  */
 
 #ifdef PROC_SERVICE_IS_OLD
 typedef const struct ps_prochandle *gdb_ps_prochandle_t;
@@ -1058,7 +1055,7 @@ ps_lgetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid,
   return PS_OK;
 }
 
-/* Set floating-point regs for LWP */
+/* Set floating-point regs for LWP.  */
 
 ps_err_e
 ps_lsetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid,
@@ -1135,7 +1132,7 @@ ps_lgetLDT (gdb_ps_prochandle_t ph, lwpid_t lwpid,
 
 /* Convert PTID to printable form.  */
 
-char *
+static char *
 solaris_pid_to_str (struct target_ops *ops, ptid_t ptid)
 {
   static char buf[100];
@@ -1269,7 +1266,7 @@ info_cb (const td_thrhandle_t *th, void *s)
 
       /* Wrap up line, if necessary.  */
       if (ti.ti_state != TD_THR_SLEEP && ti.ti_startfunc == 0)
-	printf_filtered ("\n");	/* don't you hate counting newlines? */
+	printf_filtered ("\n");	/* don't you hate counting newlines?  */
     }
   else
     warning (_("info sol-thread: failed to get info for thread."));
@@ -1342,6 +1339,9 @@ init_sol_thread_ops (void)
   sol_thread_ops.to_get_ada_task_ptid = sol_get_ada_task_ptid;
   sol_thread_ops.to_magic = OPS_MAGIC;
 }
+
+/* Silence -Wmissing-prototypes.  */
+extern void _initialize_sol_thread (void);
 
 void
 _initialize_sol_thread (void)

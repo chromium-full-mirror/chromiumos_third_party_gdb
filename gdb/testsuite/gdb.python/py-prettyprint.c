@@ -1,6 +1,6 @@
 /* This testcase is part of GDB, the GNU debugger.
 
-   Copyright 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright 2008-2012 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -42,6 +42,14 @@ struct ns {
 
 struct lazystring {
   const char *lazy_str;
+};
+
+struct hint_error {
+  int x;
+};
+
+struct children_as_list {
+  int x;
 };
 
 #ifdef __cplusplus
@@ -90,6 +98,16 @@ class Derived : public Vbase1, public Vbase2, public Vbase3
     }
 };
 
+class Fake
+{
+  int sname;
+  
+ public:
+  Fake (const int name = 0):
+  sname (name)
+  {
+  }
+};
 #endif
 
 struct substruct {
@@ -134,6 +152,11 @@ struct justchildren
 };
 
 typedef struct justchildren nostring_type;
+
+struct memory_error
+{
+  const char *s;
+};
 
 struct container
 {
@@ -200,6 +223,22 @@ struct nullstr
 struct string_repr string_1 = { { "one" } };
 struct string_repr string_2 = { { "two" } };
 
+static int
+eval_func (int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8)
+{
+  return p1;
+}
+
+static void
+eval_sub (void)
+{
+  struct eval_type_s { int x; } eval1 = { 1 }, eval2 = { 2 }, eval3 = { 3 },
+				eval4 = { 4 }, eval5 = { 5 }, eval6 = { 6 },
+				eval7 = { 7 }, eval8 = { 8 }, eval9 = { 9 };
+
+  eval1.x++; /* eval-break */
+}
+
 int
 main ()
 {
@@ -212,9 +251,17 @@ main ()
   const struct string_repr cstring = { { "const string" } };
   /* Clearing by being `static' could invoke an other GDB C++ bug.  */
   struct nullstr nullstr;
-  nostring_type nstype;
+  nostring_type nstype, nstype2;
+  struct memory_error me;
+  struct ns ns, ns2;
+  struct lazystring estring, estring2;
+  struct hint_error hint_error;
+  struct children_as_list children_as_list;
+
   nstype.elements = narray;
   nstype.len = 0;
+
+  me.s = "blah";
 
   init_ss(&ss, 1, 2);
   init_ss(ssa+0, 3, 4);
@@ -225,12 +272,17 @@ main ()
   init_s (&arraystruct.x[0], 23);
   init_s (&arraystruct.x[1], 24);
 
-  struct ns  ns;
   ns.null_str = "embedded\0null\0string";
   ns.length = 20;
 
-  struct lazystring estring;
+  /* Make a "corrupted" string.  */
+  ns2.null_str = NULL;
+  ns2.length = 20;
+
   estring.lazy_str = "embedded x\201\202\203\204" ;
+
+  /* Incomplete UTF-8, but ok Latin-1.  */
+  estring2.lazy_str = "embedded x\302";
 
 #ifdef __cplusplus
   S cps;
@@ -254,6 +306,7 @@ main ()
 
   Derived derived;
   
+  Fake fake (42);
 #endif
 
   add_item (&c, 23);		/* MI breakpoint here */
@@ -275,5 +328,9 @@ main ()
   nstype.elements[1] = 42;
   nstype.len = 2;
   
+  nstype2 = nstype;
+
+  eval_sub ();
+
   return 0;      /* break to inspect struct and union */
 }

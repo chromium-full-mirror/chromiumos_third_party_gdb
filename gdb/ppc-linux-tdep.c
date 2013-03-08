@@ -1,8 +1,7 @@
 /* Target-dependent code for GDB, the GNU debugger.
 
-   Copyright (C) 1986, 1987, 1989, 1991, 1992, 1993, 1994, 1995, 1996, 1997,
-   2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 1986-1987, 1989, 1991-1997, 2000-2012 Free Software
+   Foundation, Inc.
 
    This file is part of GDB.
 
@@ -38,6 +37,7 @@
 #include "solist.h"
 #include "ppc-tdep.h"
 #include "ppc-linux-tdep.h"
+#include "glibc-tdep.h"
 #include "trad-frame.h"
 #include "frame-unwind.h"
 #include "tramp-frame.h"
@@ -48,6 +48,15 @@
 #include "arch-utils.h"
 #include "spu-tdep.h"
 #include "xml-syscall.h"
+#include "linux-tdep.h"
+
+#include "stap-probe.h"
+#include "ax.h"
+#include "ax-gdb.h"
+#include "cli/cli-utils.h"
+#include "parser-defs.h"
+#include "user-regs.h"
+#include <ctype.h>
 
 #include "features/rs6000/powerpc-32l.c"
 #include "features/rs6000/powerpc-altivec32l.c"
@@ -64,6 +73,9 @@
 #include "features/rs6000/powerpc-isa205-altivec64l.c"
 #include "features/rs6000/powerpc-isa205-vsx64l.c"
 #include "features/rs6000/powerpc-e500l.c"
+
+/* Shared library operations for PowerPC-Linux.  */
+static struct target_so_ops powerpc_so_ops;
 
 /* The syscall's XML filename for PPC and PPC64.  */
 #define XML_SYSCALL_FILENAME_PPC "syscalls/ppc-linux.xml"
@@ -146,7 +158,7 @@
 	Now we've hit the breakpoint at shr1.  (The breakpoint was
 	reset from the PLT entry to the actual shr1 function after the
 	shared library was loaded.) Note that the PLT entry has been
-	resolved to contain a branch that takes us directly to shr1. 
+	resolved to contain a branch that takes us directly to shr1.
 	(The real one, not the PLT entry.)
 
 	    (gdb) x/2i 0x100409d4
@@ -157,7 +169,7 @@
    changed twice.
 
    Now the problem should be obvious.  GDB places a breakpoint (a
-   trap instruction) on the zero value of the PLT entry for shr1. 
+   trap instruction) on the zero value of the PLT entry for shr1.
    Later on, after the shared library had been loaded and the PLT
    initialized, GDB gets a signal indicating this fact and attempts
    (as it always does when it stops) to remove all the breakpoints.
@@ -166,7 +178,7 @@
    word) to be written back to the now initialized PLT entry thus
    destroying a portion of the initialization that had occurred only a
    short time ago.  When execution continued, the zero word would be
-   executed as an instruction an an illegal instruction trap was
+   executed as an instruction an illegal instruction trap was
    generated instead.  (0 is not a legal instruction.)
 
    The fix for this problem was fairly straightforward.  The function
@@ -180,7 +192,7 @@
    that the latter does not is check to make sure that the breakpoint
    location actually contains a breakpoint (trap instruction) prior
    to attempting to write back the old contents.  If it does contain
-   a trap instruction, we allow the old contents to be written back. 
+   a trap instruction, we allow the old contents to be written back.
    Otherwise, we silently do nothing.
 
    The big question is whether memory_remove_breakpoint () should be
@@ -215,9 +227,9 @@ ppc_linux_memory_remove_breakpoint (struct gdbarch *gdbarch,
 
   /* If our breakpoint is no longer at the address, this means that the
      program modified the code on us, so it is wrong to put back the
-     old value */
+     old value.  */
   if (val == 0 && memcmp (bp, old_contents, bplen) == 0)
-    val = target_write_memory (addr, bp_tgt->shadow_contents, bplen);
+    val = target_write_raw_memory (addr, bp_tgt->shadow_contents, bplen);
 
   do_cleanups (cleanup);
   return val;
@@ -229,7 +241,7 @@ ppc_linux_memory_remove_breakpoint (struct gdbarch *gdbarch,
    which were added later, do get returned in a register though.  */
 
 static enum return_value_convention
-ppc_linux_return_value (struct gdbarch *gdbarch, struct type *func_type,
+ppc_linux_return_value (struct gdbarch *gdbarch, struct value *function,
 			struct type *valtype, struct regcache *regcache,
 			gdb_byte *readbuf, const gdb_byte *writebuf)
 {  
@@ -239,7 +251,7 @@ ppc_linux_return_value (struct gdbarch *gdbarch, struct type *func_type,
 	   && TYPE_VECTOR (valtype)))
     return RETURN_VALUE_STRUCT_CONVENTION;
   else
-    return ppc_sysv_abi_return_value (gdbarch, func_type, valtype, regcache,
+    return ppc_sysv_abi_return_value (gdbarch, function, valtype, regcache,
 				      readbuf, writebuf);
 }
 
@@ -283,8 +295,8 @@ read_insn (CORE_ADDR pc)
 /* An instruction to match.  */
 struct insn_pattern
 {
-  unsigned int mask;            /* mask the insn with this... */
-  unsigned int data;            /* ...and see if it matches this. */
+  unsigned int mask;            /* mask the insn with this...  */
+  unsigned int data;            /* ...and see if it matches this.  */
   int optional;                 /* If non-zero, this insn may be absent.  */
 };
 
@@ -599,6 +611,86 @@ ppc64_standard_linkage3_target (struct frame_info *frame,
   return ppc64_desc_entry_point (gdbarch, desc);
 }
 
+/* PLT stub in executable.  */
+static struct insn_pattern powerpc32_plt_stub[] =
+  {
+    { 0xffff0000, 0x3d600000, 0 },	/* lis   r11, xxxx	 */
+    { 0xffff0000, 0x816b0000, 0 },	/* lwz   r11, xxxx(r11)  */
+    { 0xffffffff, 0x7d6903a6, 0 },	/* mtctr r11		 */
+    { 0xffffffff, 0x4e800420, 0 },	/* bctr			 */
+    {          0,          0, 0 }
+  };
+
+/* PLT stub in shared library.  */
+static struct insn_pattern powerpc32_plt_stub_so[] =
+  {
+    { 0xffff0000, 0x817e0000, 0 },	/* lwz   r11, xxxx(r30)  */
+    { 0xffffffff, 0x7d6903a6, 0 },	/* mtctr r11		 */
+    { 0xffffffff, 0x4e800420, 0 },	/* bctr			 */
+    { 0xffffffff, 0x60000000, 0 },	/* nop			 */
+    {          0,          0, 0 }
+  };
+#define POWERPC32_PLT_STUB_LEN 	ARRAY_SIZE (powerpc32_plt_stub)
+
+/* Check if PC is in PLT stub.  For non-secure PLT, stub is in .plt
+   section.  For secure PLT, stub is in .text and we need to check
+   instruction patterns.  */
+
+static int
+powerpc_linux_in_dynsym_resolve_code (CORE_ADDR pc)
+{
+  struct minimal_symbol *sym;
+
+  /* Check whether PC is in the dynamic linker.  This also checks
+     whether it is in the .plt section, used by non-PIC executables.  */
+  if (svr4_in_dynsym_resolve_code (pc))
+    return 1;
+
+  /* Check if we are in the resolver.  */
+  sym = lookup_minimal_symbol_by_pc (pc);
+  if (sym != NULL
+      && (strcmp (SYMBOL_LINKAGE_NAME (sym), "__glink") == 0
+	  || strcmp (SYMBOL_LINKAGE_NAME (sym), "__glink_PLTresolve") == 0))
+    return 1;
+
+  return 0;
+}
+
+/* Follow PLT stub to actual routine.  */
+
+static CORE_ADDR
+ppc_skip_trampoline_code (struct frame_info *frame, CORE_ADDR pc)
+{
+  int insnbuf[POWERPC32_PLT_STUB_LEN];
+  struct gdbarch *gdbarch = get_frame_arch (frame);
+  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+  enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
+  CORE_ADDR target = 0;
+
+  if (insns_match_pattern (pc, powerpc32_plt_stub, insnbuf))
+    {
+      /* Insn pattern is
+		lis   r11, xxxx
+		lwz   r11, xxxx(r11)
+	 Branch target is in r11.  */
+
+      target = (insn_d_field (insnbuf[0]) << 16) | insn_d_field (insnbuf[1]);
+      target = read_memory_unsigned_integer (target, 4, byte_order);
+    }
+
+  if (insns_match_pattern (pc, powerpc32_plt_stub_so, insnbuf))
+    {
+      /* Insn pattern is
+		lwz   r11, xxxx(r30)
+	 Branch target is in r11.  */
+
+      target = get_frame_register_unsigned (frame, tdep->ppc_gp0_regnum + 30)
+	       + insn_d_field (insnbuf[0]);
+      target = read_memory_unsigned_integer (target, 4, byte_order);
+    }
+
+  return target;
+}
 
 /* Given that we've begun executing a call trampoline at PC, return
    the entry point of the function the trampoline will go to.  */
@@ -911,7 +1003,8 @@ ppc_linux_sigtramp_cache (struct frame_info *this_frame,
   for (i = 0; i < 32; i++)
     {
       int regnum = i + tdep->ppc_gp0_regnum;
-      trad_frame_set_reg_addr (this_cache, regnum, gpregs + i * tdep->wordsize);
+      trad_frame_set_reg_addr (this_cache,
+			       regnum, gpregs + i * tdep->wordsize);
     }
   trad_frame_set_reg_addr (this_cache,
 			   gdbarch_pc_regnum (gdbarch),
@@ -1191,6 +1284,75 @@ ppc_linux_core_read_description (struct gdbarch *gdbarch,
     }
 }
 
+/* Implementation of `gdbarch_stap_is_single_operand', as defined in
+   gdbarch.h.  */
+
+static int
+ppc_stap_is_single_operand (struct gdbarch *gdbarch, const char *s)
+{
+  return (*s == 'i' /* Literal number.  */
+	  || (isdigit (*s) && s[1] == '('
+	      && isdigit (s[2])) /* Displacement.  */
+	  || (*s == '(' && isdigit (s[1])) /* Register indirection.  */
+	  || isdigit (*s)); /* Register value.  */
+}
+
+/* Implementation of `gdbarch_stap_parse_special_token', as defined in
+   gdbarch.h.  */
+
+static int
+ppc_stap_parse_special_token (struct gdbarch *gdbarch,
+			      struct stap_parse_info *p)
+{
+  if (isdigit (*p->arg))
+    {
+      /* This temporary pointer is needed because we have to do a lookahead.
+	  We could be dealing with a register displacement, and in such case
+	  we would not need to do anything.  */
+      const char *s = p->arg;
+      char *regname;
+      int len;
+      struct stoken str;
+
+      while (isdigit (*s))
+	++s;
+
+      if (*s == '(')
+	{
+	  /* It is a register displacement indeed.  Returning 0 means we are
+	     deferring the treatment of this case to the generic parser.  */
+	  return 0;
+	}
+
+      len = s - p->arg;
+      regname = alloca (len + 2);
+      regname[0] = 'r';
+
+      strncpy (regname + 1, p->arg, len);
+      ++len;
+      regname[len] = '\0';
+
+      if (user_reg_map_name_to_regnum (gdbarch, regname, len) == -1)
+	error (_("Invalid register name `%s' on expression `%s'."),
+	       regname, p->saved_arg);
+
+      write_exp_elt_opcode (OP_REGISTER);
+      str.ptr = regname;
+      str.length = len;
+      write_exp_string (str);
+      write_exp_elt_opcode (OP_REGISTER);
+
+      p->arg = s;
+    }
+  else
+    {
+      /* All the other tokens should be handled correctly by the generic
+	 parser.  */
+      return 0;
+    }
+
+  return 1;
+}
 
 /* Cell/B.E. active SPE context tracking support.  */
 
@@ -1365,7 +1527,12 @@ ppu2spu_prev_register (struct frame_info *this_frame,
   gdb_byte *buf;
 
   buf = alloca (register_size (gdbarch, regnum));
-  regcache_cooked_read (cache->regcache, regnum, buf);
+
+  if (regnum < gdbarch_num_regs (gdbarch))
+    regcache_raw_read (cache->regcache, regnum, buf);
+  else
+    gdbarch_pseudo_register_read (gdbarch, cache->regcache, regnum, buf);
+
   return frame_unwind_got_bytes (this_frame, regnum, buf);
 }
 
@@ -1390,9 +1557,9 @@ ppu2spu_unwind_register (void *src, int regnum, gdb_byte *buf)
   else if (regnum == SPU_PC_REGNUM)
     store_unsigned_integer (buf, 4, byte_order, data->npc);
   else
-    return 0;
+    return REG_UNAVAILABLE;
 
-  return 1;
+  return REG_VALID;
 }
 
 static int
@@ -1470,6 +1637,7 @@ ppu2spu_dealloc_cache (struct frame_info *self, void *this_cache)
 
 static const struct frame_unwind ppu2spu_unwind = {
   ARCH_FRAME,
+  default_frame_unwind_stop_reason,
   ppu2spu_this_id,
   ppu2spu_prev_register,
   NULL,
@@ -1486,6 +1654,8 @@ ppc_linux_init_abi (struct gdbarch_info info,
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
   struct tdesc_arch_data *tdesc_data = (void *) info.tdep_info;
 
+  linux_init_abi (info, gdbarch);
+
   /* PPC GNU/Linux uses either 64-bit or 128-bit long doubles; where
      128-bit, they are IBM long double, not IEEE quad long double as
      in the System V ABI PowerPC Processor Supplement.  We can safely
@@ -1500,12 +1670,21 @@ ppc_linux_init_abi (struct gdbarch_info info,
   /* Get the syscall number from the arch's register.  */
   set_gdbarch_get_syscall_number (gdbarch, ppc_linux_get_syscall_number);
 
+  /* SystemTap functions.  */
+  set_gdbarch_stap_integer_prefix (gdbarch, "i");
+  set_gdbarch_stap_register_indirection_prefix (gdbarch, "(");
+  set_gdbarch_stap_register_indirection_suffix (gdbarch, ")");
+  set_gdbarch_stap_gdb_register_prefix (gdbarch, "r");
+  set_gdbarch_stap_is_single_operand (gdbarch, ppc_stap_is_single_operand);
+  set_gdbarch_stap_parse_special_token (gdbarch,
+					ppc_stap_parse_special_token);
+
   if (tdep->wordsize == 4)
     {
       /* Until November 2001, gcc did not comply with the 32 bit SysV
 	 R4 ABI requirement that structures less than or equal to 8
 	 bytes should be returned in registers.  Instead GCC was using
-	 the the AIX/PowerOpen ABI - everything returned in memory
+	 the AIX/PowerOpen ABI - everything returned in memory
 	 (well ignoring vectors that is).  When this was corrected, it
 	 wasn't fixed for GNU/Linux native platform.  Use the
 	 PowerOpen struct convention.  */
@@ -1515,7 +1694,7 @@ ppc_linux_init_abi (struct gdbarch_info info,
                                             ppc_linux_memory_remove_breakpoint);
 
       /* Shared library handling.  */
-      set_gdbarch_skip_trampoline_code (gdbarch, find_solib_trampoline_target);
+      set_gdbarch_skip_trampoline_code (gdbarch, ppc_skip_trampoline_code);
       set_solib_svr4_fetch_link_map_offsets
         (gdbarch, svr4_ilp32_fetch_link_map_offsets);
 
@@ -1523,8 +1702,10 @@ ppc_linux_init_abi (struct gdbarch_info info,
       set_xml_syscall_file_name (XML_SYSCALL_FILENAME_PPC);
 
       /* Trampolines.  */
-      tramp_frame_prepend_unwinder (gdbarch, &ppc32_linux_sigaction_tramp_frame);
-      tramp_frame_prepend_unwinder (gdbarch, &ppc32_linux_sighandler_tramp_frame);
+      tramp_frame_prepend_unwinder (gdbarch,
+				    &ppc32_linux_sigaction_tramp_frame);
+      tramp_frame_prepend_unwinder (gdbarch,
+				    &ppc32_linux_sighandler_tramp_frame);
 
       /* BFD target for core files.  */
       if (gdbarch_byte_order (gdbarch) == BFD_ENDIAN_LITTLE)
@@ -1544,6 +1725,17 @@ ppc_linux_init_abi (struct gdbarch_info info,
       else
 	set_gdbarch_core_regset_sections (gdbarch,
 					  ppc_linux_fp_regset_sections);
+
+      if (powerpc_so_ops.in_dynsym_resolve_code == NULL)
+	{
+	  powerpc_so_ops = svr4_so_ops;
+	  /* Override dynamic resolve function.  */
+	  powerpc_so_ops.in_dynsym_resolve_code =
+	    powerpc_linux_in_dynsym_resolve_code;
+	}
+      set_solib_ops (gdbarch, &powerpc_so_ops);
+
+      set_gdbarch_skip_solib_resolver (gdbarch, glibc_skip_solib_resolver);
     }
   
   if (tdep->wordsize == 8)
@@ -1562,8 +1754,10 @@ ppc_linux_init_abi (struct gdbarch_info info,
       set_xml_syscall_file_name (XML_SYSCALL_FILENAME_PPC64);
 
       /* Trampolines.  */
-      tramp_frame_prepend_unwinder (gdbarch, &ppc64_linux_sigaction_tramp_frame);
-      tramp_frame_prepend_unwinder (gdbarch, &ppc64_linux_sighandler_tramp_frame);
+      tramp_frame_prepend_unwinder (gdbarch,
+				    &ppc64_linux_sigaction_tramp_frame);
+      tramp_frame_prepend_unwinder (gdbarch,
+				    &ppc64_linux_sighandler_tramp_frame);
 
       /* BFD target for core files.  */
       if (gdbarch_byte_order (gdbarch) == BFD_ENDIAN_LITTLE)
@@ -1584,7 +1778,8 @@ ppc_linux_init_abi (struct gdbarch_info info,
 	set_gdbarch_core_regset_sections (gdbarch,
 					  ppc64_linux_fp_regset_sections);
     }
-  set_gdbarch_regset_from_core_section (gdbarch, ppc_linux_regset_from_core_section);
+  set_gdbarch_regset_from_core_section (gdbarch,
+					ppc_linux_regset_from_core_section);
   set_gdbarch_core_read_description (gdbarch, ppc_linux_core_read_description);
 
   /* Enable TLS support.  */
@@ -1628,6 +1823,8 @@ ppc_linux_init_abi (struct gdbarch_info info,
       set_gdbarch_displaced_step_location (gdbarch,
 					   ppc_linux_displaced_step_location);
     }
+
+  set_gdbarch_get_siginfo_type (gdbarch, linux_get_siginfo_type);
 }
 
 /* Provide a prototype to silence -Wmissing-prototypes.  */

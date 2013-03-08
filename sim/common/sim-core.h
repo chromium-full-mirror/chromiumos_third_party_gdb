@@ -1,6 +1,6 @@
 /* The common simulator framework for GDB, the GNU Debugger.
 
-   Copyright 2002, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright 2002, 2007-2012 Free Software Foundation, Inc.
 
    Contributed by Andrew Cagney and Red Hat.
 
@@ -241,6 +241,14 @@ extern unsigned sim_core_xor_write_buffer
  unsigned nr_bytes);
 
 
+/* Translate an address based on a map.  */
+
+extern void *sim_core_trans_addr
+(SIM_DESC sd,
+ sim_cpu *cpu,
+ unsigned map,
+ address_word addr);
+
 
 /* Fixed sized, processor oriented, read/write.
 
@@ -278,7 +286,7 @@ DECLARE_SIM_CORE_WRITE_N(aligned,4,4)
 DECLARE_SIM_CORE_WRITE_N(aligned,8,8)
 DECLARE_SIM_CORE_WRITE_N(aligned,16,16)
 
-#define sim_core_write_unaligned_1 sim_core_write_aligned_1 
+#define sim_core_write_unaligned_1 sim_core_write_aligned_1
 DECLARE_SIM_CORE_WRITE_N(unaligned,2,2)
 DECLARE_SIM_CORE_WRITE_N(unaligned,4,4)
 DECLARE_SIM_CORE_WRITE_N(unaligned,8,8)

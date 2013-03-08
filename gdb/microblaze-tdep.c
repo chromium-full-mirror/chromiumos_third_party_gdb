@@ -1,6 +1,6 @@
 /* Target-dependent code for Xilinx MicroBlaze.
 
-   Copyright 2009, 2010 Free Software Foundation, Inc.
+   Copyright 2009-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -49,19 +49,19 @@
    This set also needs to be verified if it is complete.  */
 #define IS_RETURN(op) (op == rtsd || op == rtid)
 #define IS_UPDATE_SP(op, rd, ra) \
-	((op == addik || op == addi) && rd == REG_SP && ra == REG_SP)
+  ((op == addik || op == addi) && rd == REG_SP && ra == REG_SP)
 #define IS_SPILL_SP(op, rd, ra) \
-	((op == swi || op == sw) && rd == REG_SP && ra == REG_SP)
+  ((op == swi || op == sw) && rd == REG_SP && ra == REG_SP)
 #define IS_SPILL_REG(op, rd, ra) \
-	((op == swi || op == sw) && rd != REG_SP && ra == REG_SP)
+  ((op == swi || op == sw) && rd != REG_SP && ra == REG_SP)
 #define IS_ALSO_SPILL_REG(op, rd, ra, rb) \
-	((op == swi || op == sw) && rd != REG_SP && ra == 0 && rb == REG_SP)
+  ((op == swi || op == sw) && rd != REG_SP && ra == 0 && rb == REG_SP)
 #define IS_SETUP_FP(op, ra, rb) \
-	((op == add || op == addik || op == addk) && ra == REG_SP && rb == 0)
+  ((op == add || op == addik || op == addk) && ra == REG_SP && rb == 0)
 #define IS_SPILL_REG_FP(op, rd, ra, fpregnum) \
-	((op == swi || op == sw) && rd != REG_SP && ra == fpregnum && ra != 0)
+  ((op == swi || op == sw) && rd != REG_SP && ra == fpregnum && ra != 0)
 #define IS_SAVE_HIDDEN_PTR(op, rd, ra, rb) \
-	((op == add || op == addik) && ra == MICROBLAZE_FIRST_ARGREG && rb == 0)
+  ((op == add || op == addik) && ra == MICROBLAZE_FIRST_ARGREG && rb == 0)
 
 /* The registers of the Xilinx microblaze processor.  */
 
@@ -81,7 +81,7 @@ static const char *microblaze_register_names[] =
 
 static int microblaze_debug_flag = 0;
 
-void
+static void
 microblaze_debug (const char *fmt, ...)
 { 
   if (microblaze_debug_flag)
@@ -120,7 +120,7 @@ microblaze_register_type (struct gdbarch *gdbarch, int regnum)
 
 /* Fetch the instruction at PC.  */
 
-unsigned long
+static unsigned long
 microblaze_fetch_instruction (CORE_ADDR pc)
 {
   enum bfd_endian byte_order = gdbarch_byte_order (target_gdbarch);
@@ -173,7 +173,6 @@ static struct microblaze_frame_cache *
 microblaze_alloc_frame_cache (void)
 {
   struct microblaze_frame_cache *cache;
-  int i;
 
   cache = FRAME_OBSTACK_ZALLOC (struct microblaze_frame_cache);
 
@@ -221,23 +220,23 @@ microblaze_alloc_frame_cache (void)
 
 /* Analyze the prologue to determine where registers are saved,
    the end of the prologue, etc.  Return the address of the first line
-   of "real" code (i.e., the end of the prologue). */
+   of "real" code (i.e., the end of the prologue).  */
 
 static CORE_ADDR
 microblaze_analyze_prologue (struct gdbarch *gdbarch, CORE_ADDR pc, 
 			     CORE_ADDR current_pc,
 			     struct microblaze_frame_cache *cache)
 {
-  char *name;
+  const char *name;
   CORE_ADDR func_addr, func_end, addr, stop, prologue_end_addr = 0;
   unsigned long insn;
-  int rn, rd, ra, rb, imm;
+  int rd, ra, rb, imm;
   enum microblaze_instr op;
   int flags = 0;
   int save_hidden_pointer_found = 0;
   int non_stack_instruction_found = 0;
 
-  /* Find the start of this function. */
+  /* Find the start of this function.  */
   find_pc_partial_function (pc, &name, &func_addr, &func_end);
   if (func_addr < pc)
     pc = func_addr;
@@ -257,7 +256,7 @@ microblaze_analyze_prologue (struct gdbarch *gdbarch, CORE_ADDR pc,
 
      If we're about to return, our frame has already been deallocated.
      If we are stopped at the first instruction of a prologue,
-     then our frame has not yet been set up. */
+     then our frame has not yet been set up.  */
 
   /* Get the first insn from memory.  */
 
@@ -331,7 +330,7 @@ microblaze_analyze_prologue (struct gdbarch *gdbarch, CORE_ADDR pc,
       else if (IS_SETUP_FP(op, ra, rb))
 	{
 	  /* We have a frame pointer.  Note the register which is 
-             acting as the frame pointer. */
+             acting as the frame pointer.  */
 	  flags |= MICROBLAZE_MY_FRAME_IN_FP;
 	  flags &= ~MICROBLAZE_MY_FRAME_IN_SP;
 	  cache->fp_regnum = rd;
@@ -376,7 +375,7 @@ microblaze_analyze_prologue (struct gdbarch *gdbarch, CORE_ADDR pc,
 
       /* When optimizations are enabled, it is not guaranteed that prologue
 	 instructions are not mixed in with other instructions from the
-	 program. Some programs show this behavior at -O2. This can be
+	 program.  Some programs show this behavior at -O2.  This can be
 	 avoided by adding -fno-schedule-insns2 switch as of now (edk 8.1)
 	 In such cases, we scan the function until we see the first control
 	 instruction.  */
@@ -391,7 +390,7 @@ microblaze_analyze_prologue (struct gdbarch *gdbarch, CORE_ADDR pc,
 	  continue;    /* continue if imm.  */
       }
 
-      /* This is not a prologue insn, so stop here. */
+      /* This is not a prologue insn, so stop here.  */
       microblaze_debug ("insn is not a prologue insn -- ending scan\n");
       break;
     }
@@ -426,7 +425,7 @@ microblaze_unwind_pc (struct gdbarch *gdbarch, struct frame_info *next_frame)
 /* Return PC of first real instruction of the function starting at
    START_PC.  */
 
-CORE_ADDR
+static CORE_ADDR
 microblaze_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR start_pc)
 {
   struct symtab_and_line sal;
@@ -456,12 +455,12 @@ microblaze_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR start_pc)
 
 /* Normal frames.  */
 
-struct microblaze_frame_cache *
+static struct microblaze_frame_cache *
 microblaze_frame_cache (struct frame_info *next_frame, void **this_cache)
 {
   struct microblaze_frame_cache *cache;
   struct gdbarch *gdbarch = get_frame_arch (next_frame);
-  CORE_ADDR func, pc, fp;
+  CORE_ADDR func;
   int rn;
 
   if (*this_cache)
@@ -509,7 +508,8 @@ microblaze_frame_prev_register (struct frame_info *this_frame,
         regnum = 15;
       if (regnum == MICROBLAZE_SP_REGNUM)
         regnum = 1;
-      return trad_frame_get_prev_register (this_frame, cache->saved_regs, regnum);
+      return trad_frame_get_prev_register (this_frame,
+					   cache->saved_regs, regnum);
     }
   else
     return trad_frame_get_prev_register (this_frame, cache->saved_regs,
@@ -520,6 +520,7 @@ microblaze_frame_prev_register (struct frame_info *this_frame,
 static const struct frame_unwind microblaze_frame_unwind =
 {
   NORMAL_FRAME,
+  default_frame_unwind_stop_reason,
   microblaze_frame_this_id,
   microblaze_frame_prev_register,
   NULL,
@@ -527,7 +528,8 @@ static const struct frame_unwind microblaze_frame_unwind =
 };
 
 static CORE_ADDR
-microblaze_frame_base_address (struct frame_info *next_frame, void **this_cache)
+microblaze_frame_base_address (struct frame_info *next_frame,
+			       void **this_cache)
 {
   struct microblaze_frame_cache *cache =
     microblaze_frame_cache (next_frame, this_cache);
@@ -559,6 +561,7 @@ microblaze_extract_return_value (struct type *type, struct regcache *regcache,
 	memcpy(valbuf, buf + MICROBLAZE_REGISTER_SIZE - 1, 1);
 	return;
       case 2:	/* return last 2 bytes in register.  */
+	regcache_cooked_read (regcache, MICROBLAZE_RETVAL_REGNUM, buf);
 	memcpy(valbuf, buf + MICROBLAZE_REGISTER_SIZE - 2, 2);
 	return;
       case 4:	/* for sizes 4 or 8, copy the required length.  */
@@ -581,8 +584,7 @@ microblaze_extract_return_value (struct type *type, struct regcache *regcache,
    Longs are stored in r3 (most significant word) and r4 (least
    significant word).
 
-   Small structures are always returned on stack.
-*/
+   Small structures are always returned on stack.  */
 
 static void
 microblaze_store_return_value (struct type *type, struct regcache *regcache,
@@ -609,7 +611,7 @@ microblaze_store_return_value (struct type *type, struct regcache *regcache,
 }
 
 static enum return_value_convention
-microblaze_return_value (struct gdbarch *gdbarch, struct type *func_type,
+microblaze_return_value (struct gdbarch *gdbarch, struct value *function,
 			 struct type *type, struct regcache *regcache,
 			 gdb_byte *readbuf, const gdb_byte *writebuf)
 {
@@ -720,7 +722,7 @@ microblaze_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   /* Hook in ABI-specific overrides, if they have been registered.  */
   gdbarch_init_osabi (info, gdbarch);
 
-  /* Unwind the frame. */
+  /* Unwind the frame.  */
   dwarf2_append_unwinders (gdbarch);
   frame_unwind_append_unwinder (gdbarch, &microblaze_frame_unwind);
   frame_base_append_sniffer (gdbarch, dwarf2_frame_base_sniffer);

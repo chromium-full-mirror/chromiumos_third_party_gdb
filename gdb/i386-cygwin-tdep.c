@@ -1,6 +1,6 @@
 /* Target-dependent code for Cygwin running on i386's, for GDB.
 
-   Copyright (C) 2003, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2003, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -28,6 +28,7 @@
 #include "gdbcore.h"
 #include "solib.h"
 #include "solib-target.h"
+#include "inferior.h"
 
 /* Core file support.  */
 
@@ -199,6 +200,22 @@ windows_core_xfer_shared_libraries (struct gdbarch *gdbarch,
   return len;
 }
 
+/* This is how we want PTIDs from core files to be printed.  */
+
+static char *
+i386_windows_core_pid_to_str (struct gdbarch *gdbarch, ptid_t ptid)
+{
+  static char buf[80];
+
+  if (ptid_get_lwp (ptid) != 0)
+    {
+      snprintf (buf, sizeof (buf), "Thread 0x%lx", ptid_get_lwp (ptid));
+      return buf;
+    }
+
+  return normal_pid_to_str (ptid);
+}
+
 static CORE_ADDR
 i386_cygwin_skip_trampoline_code (struct frame_info *frame, CORE_ADDR pc)
 {
@@ -233,12 +250,16 @@ i386_cygwin_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
     (gdbarch, i386_windows_regset_from_core_section);
   set_gdbarch_core_xfer_shared_libraries
     (gdbarch, windows_core_xfer_shared_libraries);
+  set_gdbarch_core_pid_to_str (gdbarch, i386_windows_core_pid_to_str);
 
   set_gdbarch_auto_wide_charset (gdbarch, i386_cygwin_auto_wide_charset);
 
   /* Canonical paths on this target look like
      `c:\Program Files\Foo App\mydll.dll', for example.  */
   set_gdbarch_has_dos_based_file_system (gdbarch, 1);
+
+  set_gdbarch_iterate_over_objfiles_in_search_order
+    (gdbarch, windows_iterate_over_objfiles_in_search_order);
 }
 
 static enum gdb_osabi
@@ -247,7 +268,7 @@ i386_cygwin_osabi_sniffer (bfd *abfd)
   char *target_name = bfd_get_target (abfd);
 
   /* Interix also uses pei-i386.
-     We need a way to distinguish between the two. */
+     We need a way to distinguish between the two.  */
   if (strcmp (target_name, "pei-i386") == 0)
     return GDB_OSABI_CYGWIN;
 

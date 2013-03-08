@@ -1,6 +1,6 @@
 /* Native-dependent code for Solaris x86.
 
-   Copyright (C) 2004, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2004, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -59,7 +59,7 @@ static int amd64_sol2_gregset64_reg_offset[] = {
   8 * 8,			/* %rdi */
   10 * 8,			/* %rbp */
   20 * 8,			/* %rsp */
-  7 * 8,			/* %r8 ... */
+  7 * 8,			/* %r8 ...  */
   6 * 8,
   5 * 8,
   4 * 8,
@@ -68,7 +68,7 @@ static int amd64_sol2_gregset64_reg_offset[] = {
   1 * 8,
   0 * 8,			/* ... %r15 */
   17 * 8,			/* %rip */
-  16 * 8,			/* %eflags */
+  19 * 8,			/* %eflags */
   18 * 8,			/* %cs */
   21 * 8,			/* %ss */
   25 * 8,			/* %ds */
@@ -89,7 +89,7 @@ static int amd64_sol2_gregset32_reg_offset[] = {
   9 * 8,			/* %esi */
   8 * 8,			/* %edi */
   17 * 8,			/* %eip */
-  16 * 8,			/* %eflags */
+  19 * 8,			/* %eflags */
   18 * 8,			/* %cs */
   21 * 8,			/* %ss */
   25 * 8,			/* %ds */
@@ -141,7 +141,7 @@ _initialize_amd64_sol2_nat (void)
   /* Fill in the generic procfs methods.  */
   t = procfs_target ();
 
-#ifdef NEW_PROC_API	/* Solaris 6 and above can do HW watchpoints */
+#ifdef NEW_PROC_API	/* Solaris 6 and above can do HW watchpoints.  */
   procfs_use_watchpoints (t);
 #endif
 

@@ -1,7 +1,6 @@
 /* TUI display locator.
 
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2006, 2007, 2008,
-   2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1998-2004, 2006-2012 Free Software Foundation, Inc.
 
    Contributed by Hewlett-Packard Company.
 
@@ -28,6 +27,7 @@
 #include "inferior.h"
 #include "target.h"
 #include "top.h"
+#include "gdb-demangle.h"
 #include "gdb_string.h"
 #include "tui/tui.h"
 #include "tui/tui-data.h"
@@ -227,7 +227,8 @@ tui_get_function_from_frame (struct frame_info *fi)
      them because the status line is too short to display them.  */
   if (*p == '<')
     p++;
-  strncpy (name, p, sizeof (name));
+  strncpy (name, p, sizeof (name) - 1);
+  name[sizeof (name) - 1] = 0;
   p = strchr (name, '(');
   if (!p)
     p = strchr (name, '>');
@@ -286,7 +287,8 @@ tui_set_locator_filename (const char *filename)
       return;
     }
 
-  element = &((struct tui_win_element *) locator->content[0])->which_element.locator;
+  element = &((struct tui_win_element *)
+	      locator->content[0])->which_element.locator;
   element->file_name[0] = 0;
   strcat_to_buf (element->file_name, MAX_LOCATOR_ELEMENT_LEN, filename);
 }
@@ -309,7 +311,8 @@ tui_set_locator_info (struct gdbarch *gdbarch,
       locator->content_size = 1;
     }
 
-  element = &((struct tui_win_element *) locator->content[0])->which_element.locator;
+  element = &((struct tui_win_element *)
+	      locator->content[0])->which_element.locator;
   element->proc_name[0] = (char) 0;
   strcat_to_buf (element->proc_name, MAX_LOCATOR_ELEMENT_LEN, procname);
   element->line_no = lineno;
@@ -340,16 +343,23 @@ tui_show_frame_info (struct frame_info *fi)
       struct tui_gen_win_info *locator = tui_locator_win_info_ptr ();
       int source_already_displayed;
       struct symtab_and_line sal;
+      CORE_ADDR pc;
 
       find_frame_sal (fi, &sal);
 
       source_already_displayed = sal.symtab != 0
         && tui_source_is_displayed (sal.symtab->filename);
-      tui_set_locator_info (get_frame_arch (fi),
-			    sal.symtab == 0 ? "??" : sal.symtab->filename,
-                            tui_get_function_from_frame (fi),
-                            sal.line,
-                            get_frame_pc (fi));
+
+      if (get_frame_pc_if_available (fi, &pc))
+	tui_set_locator_info (get_frame_arch (fi),
+			      sal.symtab == 0 ? "??" : sal.symtab->filename,
+			      tui_get_function_from_frame (fi),
+			      sal.line,
+			      pc);
+      else
+	tui_set_locator_info (get_frame_arch (fi),
+			      "??", _("<unavailable>"), sal.line, 0);
+
       tui_show_locator_content ();
       start_line = 0;
       for (i = 0; i < (tui_source_windows ())->count; i++)
@@ -358,7 +368,8 @@ tui_show_frame_info (struct frame_info *fi)
 
 	  win_info = (tui_source_windows ())->list[i];
 
-	  item = &((struct tui_win_element *) locator->content[0])->which_element;
+	  item = &((struct tui_win_element *)
+		   locator->content[0])->which_element;
 	  if (win_info == TUI_SRC_WIN)
 	    {
 	      start_line = (item->locator.line_no -
@@ -368,9 +379,14 @@ tui_show_frame_info (struct frame_info *fi)
 	    }
 	  else
 	    {
-	      if (find_pc_partial_function (get_frame_pc (fi), (char **) NULL,
+	      if (find_pc_partial_function (get_frame_pc (fi),
+					    (const char **) NULL,
 					    &low, (CORE_ADDR) 0) == 0)
-		error (_("No function contains program counter for selected frame."));
+		{
+		  /* There is no symbol available for current PC.  There is no
+		     safe way how to "disassemble backwards".  */
+		  low = get_frame_pc (fi);
+		}
 	      else
 		low = tui_get_low_disassembly_address (get_frame_arch (fi),
 						       low, get_frame_pc (fi));
@@ -383,7 +399,8 @@ tui_show_frame_info (struct frame_info *fi)
 	      l.loa = LOA_LINE;
 	      l.u.line_no = start_line;
 	      if (!(source_already_displayed
-		    && tui_line_is_displayed (item->locator.line_no, win_info, TRUE)))
+		    && tui_line_is_displayed (item->locator.line_no,
+					      win_info, TRUE)))
 		tui_update_source_window (win_info, get_frame_arch (fi),
 					  sal.symtab, l, TRUE);
 	      else
@@ -400,7 +417,8 @@ tui_show_frame_info (struct frame_info *fi)
 
 		  a.loa = LOA_ADDRESS;
 		  a.u.addr = low;
-		  if (!tui_addr_is_displayed (item->locator.addr, win_info, TRUE))
+		  if (!tui_addr_is_displayed (item->locator.addr,
+					      win_info, TRUE))
 		    tui_update_source_window (win_info, get_frame_arch (fi),
 					      sal.symtab, a, TRUE);
 		  else
@@ -435,8 +453,9 @@ extern initialize_file_ftype _initialize_tui_stack;
 void
 _initialize_tui_stack (void)
 {
-  add_com ("update", class_tui, tui_update_command, _("\
-Update the source window and locator to display the current execution point.\n"));
+  add_com ("update", class_tui, tui_update_command,
+	   _("Update the source window and locator to "
+	     "display the current execution point.\n"));
 }
 
 /* Command to update the display with the current execution point.  */

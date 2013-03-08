@@ -240,7 +240,7 @@ do_unix_read(os_emul_data *emul,
   if (status > 0)
     emul_write_buffer(scratch_buffer, buf, status, processor, cia);
 
-  zfree(scratch_buffer);
+  free(scratch_buffer);
 }
 
 
@@ -270,7 +270,7 @@ do_unix_write(os_emul_data *emul,
   /* write */
   status = write(d, scratch_buffer, nbytes);
   emul_write_status(processor, status, errno);
-  zfree(scratch_buffer);
+  free(scratch_buffer);
 
   flush_stdoutput();
 }
@@ -1033,6 +1033,11 @@ typedef	unsigned32	solaris_nlink_t;
 
 #ifdef HAVE_SYS_STAT_H
 #define	SOLARIS_ST_FSTYPSZ 16		/* array size for file system type name */
+
+/* AIX 7.1 defines st_pad[123] to st_[amc]tim.tv_pad, respectively */
+#undef st_pad1
+#undef st_pad2
+#undef st_pad3
 
 struct solaris_stat {
   solaris_dev_t		st_dev;

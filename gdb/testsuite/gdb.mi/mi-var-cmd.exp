@@ -1,5 +1,5 @@
-# Copyright 1999, 2000, 2001, 2002, 2004, 2005, 2007, 2008, 2009, 2010
-# Free Software Foundation, Inc.
+# Copyright 1999-2002, 2004-2005, 2007-2012 Free Software Foundation,
+# Inc.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,10 +28,9 @@ if [mi_gdb_start] {
     continue
 }
 
-set testfile "var-cmd"
-set srcfile ${testfile}.c
-set binfile ${objdir}/${subdir}/mi-var-cmd
-if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug additional_flags=-DFAKEARGV}] != "" } {
+standard_testfile var-cmd.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
     untested mi-var-cmd.exp
     return -1
 }
@@ -56,14 +55,14 @@ mi_create_varobj "global_simple" "global_simple" "create global variable"
 # Desc: Create non-existent variable
 
 mi_gdb_test "112-var-create bogus_unknown_variable * bogus_unknown_variable" \
-	"112\\^error,msg=\"mi_cmd_var_create: unable to create variable object\"" \
+	"112\\^error,msg=\"-var-create: unable to create variable object\"" \
 	"create non-existent variable"
 
 # Test: c_variable-1.3
 # Desc: Create out of scope variable
 
 mi_gdb_test "113-var-create argc * argc" \
-	"113\\^error,msg=\"mi_cmd_var_create: unable to create variable object\"" \
+	"113\\^error,msg=\"-var-create: unable to create variable object\"" \
 	"create out of scope variable"
 
 mi_runto do_locals_tests
@@ -123,7 +122,7 @@ mi_create_varobj_checked lsimple.integer lsimple.integer "int" \
 #    Type names (like int, long, etc..) are all proper expressions to gdb.
 #    make sure variable code does not allow users to create variables, though.
 mi_gdb_test "-var-create int * int" \
-	"&\"Attempt to use a type name as an expression.\\\\n\".*\\^error,msg=\"mi_cmd_var_create: unable to create variable object\"" \
+	"&\"Attempt to use a type name as an expression.\\\\n\".*\\^error,msg=\"-var-create: unable to create variable object\"" \
 	"create int"
 
 
@@ -244,7 +243,7 @@ mi_gdb_test "-var-update *" \
 #
 ###
 mi_gdb_test "-var-assign global_simple 0" \
-	"\\^error,msg=\"mi_cmd_var_assign: Variable object is not editable\"" \
+	"\\^error,msg=\"-var-assign: Variable object is not editable\"" \
 	"assign to global_simple"
 
 mi_gdb_test "-var-assign linteger 3333" \
@@ -377,11 +376,11 @@ mi_gdb_test "-var-update *" \
 	"assign same value to func (update)"
 
 mi_gdb_test "-var-create array_ptr * array_ptr" \
-	"\\^done,name=\"array_ptr\",numchild=\"1\",value=\"$hex\",type=\"int \\*\",has_more=\"0\"" \
+	"\\^done,name=\"array_ptr\",numchild=\"1\",value=\"$hex <array>\",type=\"int \\*\",has_more=\"0\"" \
 	"create global variable array_ptr"
 
 mi_gdb_test "-var-assign array_ptr array2" \
-	"\\^done,value=\"$hex\"" \
+	"\\^done,value=\"$hex <array2>\"" \
 	"assign array to pointer"
 
 mi_gdb_test "-var-update *" \
@@ -389,7 +388,7 @@ mi_gdb_test "-var-update *" \
 	"assign array to pointer (update)"
 
 mi_gdb_test "-var-assign array_ptr array2" \
-	"\\^done,value=\"$hex\"" \
+	"\\^done,value=\"$hex <array2>\"" \
 	"assign same array to pointer"
 
 mi_gdb_test "-var-update *" \
@@ -414,7 +413,7 @@ mi_create_varobj_checked l l {long int \*} "create l"
 # Test: c_variable-2.11
 # Desc: create do_locals_tests local in subroutine1
 mi_gdb_test "-var-create linteger * linteger" \
-	"\\^error,msg=\"mi_cmd_var_create: unable to create variable object\"" \
+	"\\^error,msg=\"-var-create: unable to create variable object\"" \
 	"create linteger"
 
 mi_step_to "subroutine1" "\{name=\"i\",value=\".*\"\},\{name=\"l\",value=\".*\"\}" \
@@ -654,13 +653,6 @@ mi_gdb_test "-var-update L" \
     "in-and-out-of-scope: out of scope now, not changed"
 
 mi_continue_to do_locals_tests
-
-# http://b/2811234
-# This test consistently fails on the nightly build machine gdb-build-1.hot.
-# It's not critical enough to block nightly release updates, so just xfail it.
-if [is_nightly_test_run] {
-    setup_xfail "*-*-*"
-}
 
 mi_gdb_test "-var-update L" \
     {\^done,changelist=\[{name="L",in_scope="true",type_changed="false",has_more="0"}\]} \

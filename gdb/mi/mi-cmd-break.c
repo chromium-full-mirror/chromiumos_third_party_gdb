@@ -1,6 +1,5 @@
 /* MI Command Set - breakpoint and watchpoint commands.
-   Copyright (C) 2000, 2001, 2002, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2002, 2007-2012 Free Software Foundation, Inc.
    Contributed by Cygnus Solutions (a Red Hat company).
 
    This file is part of GDB.
@@ -29,6 +28,7 @@
 #include "gdb.h"
 #include "exceptions.h"
 #include "observer.h"
+#include "mi-main.h"
 
 enum
   {
@@ -43,13 +43,13 @@ static int mi_breakpoint_observers_installed;
 
 static int mi_can_breakpoint_notify;
 
-/* Output a single breakpoint, when allowed. */
+/* Output a single breakpoint, when allowed.  */
 
 static void
-breakpoint_notify (int b)
+breakpoint_notify (struct breakpoint *b)
 {
   if (mi_can_breakpoint_notify)
-    gdb_breakpoint_query (uiout, b, NULL);
+    gdb_breakpoint_query (current_uiout, b->number, NULL);
 }
 
 enum bp_type
@@ -83,7 +83,7 @@ mi_cmd_break_insert (char *command, char **argv, int argc)
       IGNORE_COUNT_OPT, THREAD_OPT, PENDING_OPT, DISABLE_OPT,
       TRACEPOINT_OPT,
     };
-  static struct mi_opt opts[] =
+  static const struct mi_opt opts[] =
   {
     {"h", HARDWARE_OPT, 0},
     {"t", TEMP_OPT, 0},
@@ -98,12 +98,13 @@ mi_cmd_break_insert (char *command, char **argv, int argc)
 
   /* Parse arguments. It could be -r or -h or -t, <location> or ``--''
      to denote the end of the option list. */
-  int optind = 0;
-  char *optarg;
+  int oind = 0;
+  char *oarg;
 
   while (1)
     {
-      int opt = mi_getopt ("mi_cmd_break_insert", argc, argv, opts, &optind, &optarg);
+      int opt = mi_getopt ("-break-insert", argc, argv,
+			   opts, &oind, &oarg);
       if (opt < 0)
 	break;
       switch ((enum opt) opt)
@@ -115,13 +116,13 @@ mi_cmd_break_insert (char *command, char **argv, int argc)
 	  hardware = 1;
 	  break;
 	case CONDITION_OPT:
-	  condition = optarg;
+	  condition = oarg;
 	  break;
 	case IGNORE_COUNT_OPT:
-	  ignore_count = atol (optarg);
+	  ignore_count = atol (oarg);
 	  break;
 	case THREAD_OPT:
-	  thread = atol (optarg);
+	  thread = atol (oarg);
 	  break;
 	case PENDING_OPT:
 	  pending = 1;
@@ -135,18 +136,16 @@ mi_cmd_break_insert (char *command, char **argv, int argc)
 	}
     }
 
-  if (optind >= argc)
-    error (_("mi_cmd_break_insert: Missing <location>"));
-  if (optind < argc - 1)
-    error (_("mi_cmd_break_insert: Garbage following <location>"));
-  address = argv[optind];
+  if (oind >= argc)
+    error (_("-break-insert: Missing <location>"));
+  if (oind < argc - 1)
+    error (_("-break-insert: Garbage following <location>"));
+  address = argv[oind];
 
-  /* Now we have what we need, let's insert the breakpoint! */
+  /* Now we have what we need, let's insert the breakpoint!  */
   if (! mi_breakpoint_observers_installed)
     {
       observer_attach_breakpoint_created (breakpoint_notify);
-      observer_attach_breakpoint_modified (breakpoint_notify);
-      observer_attach_breakpoint_deleted (breakpoint_notify);
       mi_breakpoint_observers_installed = 1;
     }
 
@@ -165,11 +164,12 @@ mi_cmd_break_insert (char *command, char **argv, int argc)
 		 : (hardware ? bp_hardware_breakpoint : bp_breakpoint));
 
   create_breakpoint (get_current_arch (), address, condition, thread,
+		     NULL,
 		     0 /* condition and thread are valid.  */,
 		     temp_p, type_wanted,
 		     ignore_count,
 		     pending ? AUTO_BOOLEAN_TRUE : AUTO_BOOLEAN_FALSE,
-		     NULL, 0, enabled);
+		     &bkpt_breakpoint_ops, 0, enabled, 0, 0);
   do_cleanups (back_to);
 
 }
@@ -186,7 +186,7 @@ mi_cmd_break_passcount (char *command, char **argv, int argc)
 {
   int n;
   int p;
-  struct breakpoint *t;
+  struct tracepoint *t;
 
   if (argc != 2)
     error (_("Usage: tracepoint-number passcount"));
@@ -202,7 +202,7 @@ mi_cmd_break_passcount (char *command, char **argv, int argc)
     }
   else
     {
-      error (_("Cound not find tracepoint %d"), n);
+      error (_("Could not find tracepoint %d"), n);
     }
 }
 
@@ -210,7 +210,7 @@ mi_cmd_break_passcount (char *command, char **argv, int argc)
    first argument: 
    -break-watch <expr> --> insert a regular wp.  
    -break-watch -r <expr> --> insert a read watchpoint.
-   -break-watch -a <expr> --> insert an access wp. */
+   -break-watch -a <expr> --> insert an access wp.  */
 
 void
 mi_cmd_break_watch (char *command, char **argv, int argc)
@@ -221,7 +221,7 @@ mi_cmd_break_watch (char *command, char **argv, int argc)
     {
       READ_OPT, ACCESS_OPT
     };
-  static struct mi_opt opts[] =
+  static const struct mi_opt opts[] =
   {
     {"r", READ_OPT, 0},
     {"a", ACCESS_OPT, 0},
@@ -229,13 +229,13 @@ mi_cmd_break_watch (char *command, char **argv, int argc)
   };
 
   /* Parse arguments. */
-  int optind = 0;
-  char *optarg;
+  int oind = 0;
+  char *oarg;
 
   while (1)
     {
-      int opt = mi_getopt ("mi_cmd_break_watch", argc, argv,
-			   opts, &optind, &optarg);
+      int opt = mi_getopt ("-break-watch", argc, argv,
+			   opts, &oind, &oarg);
 
       if (opt < 0)
 	break;
@@ -249,26 +249,26 @@ mi_cmd_break_watch (char *command, char **argv, int argc)
 	  break;
 	}
     }
-  if (optind >= argc)
-    error (_("mi_cmd_break_watch: Missing <expression>"));
-  if (optind < argc - 1)
-    error (_("mi_cmd_break_watch: Garbage following <expression>"));
-  expr = argv[optind];
+  if (oind >= argc)
+    error (_("-break-watch: Missing <expression>"));
+  if (oind < argc - 1)
+    error (_("-break-watch: Garbage following <expression>"));
+  expr = argv[oind];
 
-  /* Now we have what we need, let's insert the watchpoint! */
+  /* Now we have what we need, let's insert the watchpoint!  */
   switch (type)
     {
     case REG_WP:
-      watch_command_wrapper (expr, FROM_TTY);
+      watch_command_wrapper (expr, FROM_TTY, 0);
       break;
     case READ_WP:
-      rwatch_command_wrapper (expr, FROM_TTY);
+      rwatch_command_wrapper (expr, FROM_TTY, 0);
       break;
     case ACCESS_WP:
-      awatch_command_wrapper (expr, FROM_TTY);
+      awatch_command_wrapper (expr, FROM_TTY, 0);
       break;
     default:
-      error (_("mi_cmd_break_watch: Unknown watchpoint type."));
+      error (_("-break-watch: Unknown watchpoint type."));
     }
 }
 
@@ -299,19 +299,19 @@ mi_cmd_break_commands (char *command, char **argv, int argc)
   struct breakpoint *b;
 
   if (argc < 1)
-    error ("USAGE: %s <BKPT> [<COMMAND> [<COMMAND>...]]", command);
+    error (_("USAGE: %s <BKPT> [<COMMAND> [<COMMAND>...]]"), command);
 
   bnum = strtol (argv[0], &endptr, 0);
   if (endptr == argv[0])
-    error ("breakpoint number argument \"%s\" is not a number.",
+    error (_("breakpoint number argument \"%s\" is not a number."),
 	   argv[0]);
   else if (*endptr != '\0')
-    error ("junk at the end of breakpoint number argument \"%s\".",
+    error (_("junk at the end of breakpoint number argument \"%s\"."),
 	   argv[0]);
 
   b = get_breakpoint (bnum);
   if (b == NULL)
-    error ("breakpoint %d not found.", bnum);
+    error (_("breakpoint %d not found."), bnum);
 
   mi_command_line_array = argv;
   mi_command_line_array_ptr = 1;

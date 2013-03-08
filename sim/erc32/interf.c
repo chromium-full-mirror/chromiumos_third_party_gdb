@@ -234,6 +234,9 @@ sim_open (kind, callback, abfd, argv)
 		if ((stat + 1) < argc) {
 		    freq = strtol(argv[++stat], (char **)NULL, 0);
 		}
+	    } else
+	    if (strncmp(argv[stat], "--sysroot=", sizeof("--sysroot=") - 1) == 0) {
+		/* Ignore until we start to support this.  */
 	    } else {
 		(*sim_callback->printf_filtered) (sim_callback,
 						  "unknown option %s\n",
@@ -330,7 +333,7 @@ sim_store_register(sd, regno, value, length)
 	regval = (value[3] << 24) | (value[2] << 16)
 		 | (value[1] << 8) | value[0];
     set_regi(&sregs, regno, regval);
-    return -1;
+    return length;
 }
 
 
@@ -385,13 +388,13 @@ sim_stop_reason(sd, reason, sigrc)
     switch (simstat) {
 	case CTRL_C:
 	*reason = sim_stopped;
-	*sigrc = TARGET_SIGNAL_INT;
+	*sigrc = GDB_SIGNAL_INT;
 	break;
     case OK:
     case TIME_OUT:
     case BPT_HIT:
 	*reason = sim_stopped;
-	*sigrc = TARGET_SIGNAL_TRAP;
+	*sigrc = GDB_SIGNAL_TRAP;
 	break;
     case ERROR:
 	*sigrc = 0;
@@ -479,6 +482,12 @@ sim_do_command(sd, cmd)
     char           *cmd;
 {
     exec_cmd(&sregs, cmd);
+}
+
+char **
+sim_complete_command (SIM_DESC sd, char *text, char *word)
+{
+  return NULL;
 }
 
 #if 0 /* FIXME: These shouldn't exist.  */

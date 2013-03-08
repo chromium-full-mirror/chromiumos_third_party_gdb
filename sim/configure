@@ -636,6 +636,7 @@ LIBS
 CPPFLAGS'
 ac_subdirs_all='arm
 avr
+bfin
 cr16
 cris
 d10v
@@ -651,6 +652,7 @@ microblaze
 mips
 mn10300
 moxie
+rl78
 rx
 sh64
 sh
@@ -3622,7 +3624,7 @@ sim_common=yes
 sim_igen=no
 sim_arch=
 case "${target}" in
-   arm*-*-* | thumb*-*-* | strongarm*-*-* | xscale-*-*)
+   arm*-*-*)
 
   sim_arch=arm
 
@@ -3638,6 +3640,14 @@ subdirs="$subdirs arm"
   subdirs="$subdirs avr"
 
 
+       ;;
+   bfin-*-*)
+
+  sim_arch=bfin
+  subdirs="$subdirs bfin"
+
+
+       sim_testsuite=yes
        ;;
    cr16*-*-*)
 
@@ -3757,6 +3767,13 @@ subdirs="$subdirs arm"
 
 
        sim_testsuite=yes
+       ;;
+   rl78-*-*)
+
+  sim_arch=rl78
+  subdirs="$subdirs rl78"
+
+
        ;;
    rx-*-*)
 

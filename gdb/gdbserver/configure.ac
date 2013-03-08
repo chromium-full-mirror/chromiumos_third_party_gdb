@@ -1,6 +1,5 @@
 dnl Autoconf configure script for GDB server.
-dnl Copyright (C) 2000, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,
-dnl 2010 Free Software Foundation, Inc.
+dnl Copyright (C) 2000, 2002-2012 Free Software Foundation, Inc.
 dnl
 dnl This file is part of GDB.
 dnl
@@ -23,7 +22,8 @@ AC_PREREQ(2.59)dnl
 
 AC_INIT(server.c)
 AC_CONFIG_HEADER(config.h:config.in)
-AC_CONFIG_LIBOBJ_DIR(../gnulib)
+
+AM_MAINTAINER_MODE
 
 AC_PROG_CC
 AC_GNU_SOURCE
@@ -31,19 +31,33 @@ AC_GNU_SOURCE
 AC_CANONICAL_SYSTEM
 
 AC_PROG_INSTALL
+AC_PROG_RANLIB
 
 AC_ARG_PROGRAM
 
 AC_HEADER_STDC
+AC_HEADER_DIRENT
+
+AC_FUNC_ALLOCA
+
+# Check for the 'make' the user wants to use.
+AC_CHECK_PROGS(MAKE, make)
+
+# Configure gnulib.  We can't use AC_CONFIG_SUBDIRS as that'd expect
+# to find the the source subdir to be configured directly under
+# gdbserver/.  We need to build gnulib under some other directory not
+# "gnulib", to avoid the problem of both GDB and GDBserver wanting to
+# build it in the same directory, when building in the source dir.
+ACX_CONFIGURE_DIR(["../gnulib"], ["build-gnulib-gdbserver"])
 
 AC_CHECK_HEADERS(sgtty.h termio.h termios.h sys/reg.h string.h dnl
 		 proc_service.h sys/procfs.h thread_db.h linux/elf.h dnl
 		 stdlib.h unistd.h dnl
 		 errno.h fcntl.h signal.h sys/file.h malloc.h dnl
 		 sys/ioctl.h netinet/in.h sys/socket.h netdb.h dnl
-		 netinet/tcp.h arpa/inet.h sys/wait.h)
-AC_CHECK_FUNCS(pread pwrite pread64)
-AC_REPLACE_FUNCS(memmem)
+		 netinet/tcp.h arpa/inet.h sys/wait.h sys/un.h)
+AC_CHECK_FUNCS(pread pwrite pread64 readlink)
+AC_REPLACE_FUNCS(vasprintf vsnprintf)
 
 # Check for UST
 ustlibs=""
@@ -93,6 +107,48 @@ fi
 AC_SUBST(ustlibs)
 AC_SUBST(ustinc)
 
+AC_ARG_ENABLE(werror,
+  AS_HELP_STRING([--enable-werror], [treat compile warnings as errors]),
+  [case "${enableval}" in
+     yes | y) ERROR_ON_WARNING="yes" ;;
+     no | n)  ERROR_ON_WARNING="no" ;;
+     *) AC_MSG_ERROR(bad value ${enableval} for --enable-werror) ;;
+   esac])
+
+# Enable -Werror by default when using gcc
+if test "${GCC}" = yes -a -z "${ERROR_ON_WARNING}" ; then
+    ERROR_ON_WARNING=yes
+fi
+
+WERROR_CFLAGS=""
+if test "${ERROR_ON_WARNING}" = yes ; then
+    WERROR_CFLAGS="-Werror"
+fi
+
+build_warnings="-Wall -Wdeclaration-after-statement -Wpointer-arith \
+-Wformat-nonliteral -Wno-char-subscripts"
+
+WARN_CFLAGS=""
+if test "x$GCC" = xyes
+then
+    AC_MSG_CHECKING(compiler warning flags)
+    # Separate out the -Werror flag as some files just cannot be
+    # compiled with it enabled.
+    for w in ${build_warnings}; do
+	case $w in
+	-Werr*) WERROR_CFLAGS=-Werror ;;
+	*) # Check that GCC accepts it
+	    saved_CFLAGS="$CFLAGS"
+	    CFLAGS="$CFLAGS $w"
+	    AC_TRY_COMPILE([],[],WARN_CFLAGS="${WARN_CFLAGS} $w",)
+	    CFLAGS="$saved_CFLAGS"
+	esac
+    done
+    AC_MSG_RESULT(${WARN_CFLAGS} ${WERROR_CFLAGS})
+fi
+AC_SUBST(WARN_CFLAGS)
+AC_SUBST(WERROR_CFLAGS)
+
 dnl dladdr is glibc-specific.  It is used by thread-db.c but only for
 dnl debugging messages.  It lives in -ldl which is handled below so we don't
 dnl use AC_CHECK_LIB (or AC_SEARCH_LIBS) here.  Instead we just temporarily
@@ -118,12 +174,16 @@ AC_TRY_LINK([
   [AC_MSG_RESULT(no)])
 fi
 
-AC_CHECK_DECLS([strerror, perror, memmem])
+AC_CHECK_DECLS([strerror, perror, vasprintf, vsnprintf])
 
 AC_CHECK_TYPES(socklen_t, [], [],
 [#include <sys/types.h>
 #include <sys/socket.h>
 ])
+
+AC_CHECK_TYPES([Elf32_auxv_t, Elf64_auxv_t], [], [],
+#include <elf.h>
+)
 
 ACX_PKGVERSION([GDB])
 ACX_BUGURL([http://www.gnu.org/software/gdb/bugs/])
@@ -169,6 +229,8 @@ elif test "${srv_mingw}" = "yes"; then
   LIBS="$LIBS -lws2_32"
 elif test "${srv_qnx}" = "yes"; then
   LIBS="$LIBS -lsocket"
+elif test "${srv_lynxos}" = "yes"; then
+  LIBS="$LIBS -lnetinet"
 fi
 
 if test "${srv_mingw}" = "yes"; then
@@ -221,6 +283,16 @@ if test "$ac_cv_header_sys_procfs_h" = yes; then
   BFD_HAVE_SYS_PROCFS_TYPE(psaddr_t)
   BFD_HAVE_SYS_PROCFS_TYPE(prgregset_t)
   BFD_HAVE_SYS_PROCFS_TYPE(elf_fpregset_t)
+fi
+
+dnl Some systems (e.g., Android) have lwpid_t defined in libthread_db.h.
+if test "$bfd_cv_have_sys_procfs_type_lwpid_t" != yes; then
+  GDBSERVER_HAVE_THREAD_DB_TYPE(lwpid_t)
+fi
+
+dnl Some systems (e.g., Android) have psaddr_t defined in libthread_db.h.
+if test "$bfd_cv_have_sys_procfs_type_psaddr_t" != yes; then
+  GDBSERVER_HAVE_THREAD_DB_TYPE(psaddr_t)
 fi
 
 dnl Check for libdl, but do not add it to LIBS as only gdbserver
@@ -312,15 +384,58 @@ AC_COMPILE_IFELSE(AC_LANG_PROGRAM([]),
 	        	[gdbsrv_cv_have_visibility_hidden=no])
 CFLAGS="$saved_cflags"
 
-IPA_DEPFILES=""
+dnl Check if we can disable the virtual address space randomization.
+dnl The functionality of setarch -R.
+AC_CHECK_DECLS([ADDR_NO_RANDOMIZE],,, [#include <sys/personality.h>])
+define([PERSONALITY_TEST], [AC_LANG_PROGRAM([#include <sys/personality.h>], [
+#      if !HAVE_DECL_ADDR_NO_RANDOMIZE
+#       define ADDR_NO_RANDOMIZE 0x0040000
+#      endif
+       /* Test the flag could be set and stays set.  */
+       personality (personality (0xffffffff) | ADDR_NO_RANDOMIZE);
+       if (!(personality (personality (0xffffffff)) & ADDR_NO_RANDOMIZE))
+           return 1])])
+AC_RUN_IFELSE([PERSONALITY_TEST],
+              [gdbsrv_cv_have_personality=true],
+              [gdbsrv_cv_have_personality=false],
+              [AC_LINK_IFELSE([PERSONALITY_TEST],
+                              [gdbsrv_cv_have_personality=true],
+                              [gdbsrv_cv_have_personality=false])])
+if $gdbsrv_cv_have_personality
+then
+    AC_DEFINE([HAVE_PERSONALITY], 1,
+              [Define if you support the personality syscall.])
+fi
 
-# Rather than allowing to build a broken IPA, we simply disable it if
-# we don't find a compiler supporting all the features we need.
+
+IPA_DEPFILES=""
+extra_libraries=""
+
+# check whether to enable the inprocess agent
 if test "$ipa_obj" != "" \
    -a "$gdbsrv_cv_have_sync_builtins" = yes \
    -a "$gdbsrv_cv_have_visibility_hidden" = yes; then
-   IPA_DEPFILES="$ipa_obj"
-   extra_libraries="libinproctrace.so"
+   have_ipa=true
+else
+   have_ipa=false
+fi
+
+AC_ARG_ENABLE(inprocess-agent,
+AS_HELP_STRING([--enable-inprocess-agent], [inprocess agent]),
+[case "$enableval" in
+  yes) want_ipa=true ;;
+  no) want_ipa=false ;;
+  *) AC_MSG_ERROR([bad value $enableval for inprocess-agent]) ;;
+esac],
+[want_ipa=$have_ipa])
+
+if $want_ipa ; then
+   if $have_ipa ; then
+     IPA_DEPFILES="$ipa_obj"
+     extra_libraries="$extra_libraries libinproctrace.so"
+   else
+     AC_MSG_ERROR([inprocess agent not supported for this target])
+   fi
 fi
 
 AC_SUBST(GDBSERVER_DEPFILES)
@@ -330,6 +445,14 @@ AC_SUBST(srv_xmlbuiltin)
 AC_SUBST(srv_xmlfiles)
 AC_SUBST(IPA_DEPFILES)
 AC_SUBST(extra_libraries)
+
+GNULIB=build-gnulib-gdbserver/import
+
+GNULIB_STDINT_H=
+if test x"$STDINT_H" != x; then
+  GNULIB_STDINT_H=$GNULIB/$STDINT_H
+fi
+AC_SUBST(GNULIB_STDINT_H)
 
 AC_OUTPUT(Makefile,
 [case x$CONFIG_HEADERS in

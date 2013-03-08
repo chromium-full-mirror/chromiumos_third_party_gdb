@@ -1,6 +1,6 @@
 /* Target-dependent code for GNU/Linux m32r.
 
-   Copyright (C) 2004, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2004, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -37,6 +37,8 @@
 #include "frame-unwind.h"
 
 #include "m32r-tdep.h"
+#include "linux-tdep.h"
+
 
 
 /* Recognizing signal handler frames.  */
@@ -171,7 +173,7 @@ m32r_linux_rt_sigtramp_start (CORE_ADDR pc, struct frame_info *this_frame)
 }
 
 static int
-m32r_linux_pc_in_sigtramp (CORE_ADDR pc, char *name,
+m32r_linux_pc_in_sigtramp (CORE_ADDR pc, const char *name,
 			   struct frame_info *this_frame)
 {
   /* If we have NAME, we can optimize the search.  The trampolines are
@@ -291,7 +293,7 @@ m32r_linux_sigtramp_frame_sniffer (const struct frame_unwind *self,
 				   void **this_cache)
 {
   CORE_ADDR pc = get_frame_pc (this_frame);
-  char *name;
+  const char *name;
 
   find_pc_partial_function (pc, &name, NULL, NULL);
   if (m32r_linux_pc_in_sigtramp (pc, name, this_frame))
@@ -302,6 +304,7 @@ m32r_linux_sigtramp_frame_sniffer (const struct frame_unwind *self,
 
 static const struct frame_unwind m32r_linux_sigtramp_frame_unwind = {
   SIGTRAMP_FRAME,
+  default_frame_unwind_stop_reason,
   m32r_linux_sigtramp_frame_this_id,
   m32r_linux_sigtramp_frame_prev_register,
   NULL,
@@ -403,6 +406,8 @@ static void
 m32r_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
 {
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+
+  linux_init_abi (info, gdbarch);
 
   /* Since EVB register is not available for native debug, we reduce
      the number of registers.  */

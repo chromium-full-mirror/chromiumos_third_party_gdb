@@ -1,6 +1,5 @@
 /* Target-dependent code for OSF/1 on Alpha.
-   Copyright (C) 2002, 2003, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2002-2003, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -29,7 +28,7 @@
 
 static int
 alpha_osf1_pc_in_sigtramp (struct gdbarch *gdbarch,
-			   CORE_ADDR pc, char *func_name)
+			   CORE_ADDR pc, const char *func_name)
 {
   return (func_name != NULL && strcmp ("__sigtramp", func_name) == 0);
 }
@@ -58,8 +57,8 @@ alpha_osf1_init_abi (struct gdbarch_info info,
   alpha_mdebug_init_abi (info, gdbarch);
 
   /* The next/step support via procfs on OSF1 is broken when running
-     on multi-processor machines. We need to use software single stepping
-     instead.  */
+     on multi-processor machines.  We need to use software single
+     stepping instead.  */
   set_gdbarch_software_single_step (gdbarch, alpha_software_single_step);
 
   tdep->sigcontext_addr = alpha_osf1_sigcontext_addr;

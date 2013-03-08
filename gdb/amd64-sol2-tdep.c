@@ -1,7 +1,6 @@
 /* Target-dependent code for AMD64 Solaris.
 
-   Copyright (C) 2001, 2002, 2003, 2004, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2001-2004, 2006-2012 Free Software Foundation, Inc.
 
    Contributed by Joseph Myers, CodeSourcery, LLC.
 
@@ -46,7 +45,7 @@ static int amd64_sol2_gregset_reg_offset[] = {
   8 * 8,			/* %rdi */
   10 * 8,			/* %rbp */
   20 * 8,			/* %rsp */
-  7 * 8,			/* %r8 ... */
+  7 * 8,			/* %r8 ...  */
   6 * 8,
   5 * 8,
   4 * 8,
@@ -55,7 +54,7 @@ static int amd64_sol2_gregset_reg_offset[] = {
   1 * 8,
   0 * 8,			/* ... %r15 */
   17 * 8,			/* %rip */
-  16 * 8,			/* %eflags */
+  19 * 8,			/* %eflags */
   18 * 8,			/* %cs */
   21 * 8,			/* %ss */
   25 * 8,			/* %ds */
@@ -72,7 +71,7 @@ static int
 amd64_sol2_sigtramp_p (struct frame_info *this_frame)
 {
   CORE_ADDR pc = get_frame_pc (this_frame);
-  char *name;
+  const char *name;
 
   find_pc_partial_function (pc, &name, NULL, NULL);
   return (name && (strcmp ("sigacthandler", name) == 0
@@ -113,10 +112,6 @@ amd64_sol2_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   set_gdbarch_skip_solib_resolver (gdbarch, sol2_skip_solib_resolver);
   set_solib_svr4_fetch_link_map_offsets
     (gdbarch, svr4_lp64_fetch_link_map_offsets);
-
-  /* Solaris encodes the pid of the inferior in regset section
-     names.  */
-  set_gdbarch_core_reg_section_encodes_pid (gdbarch, 1);
 
   /* How to print LWP PTIDs from core files.  */
   set_gdbarch_core_pid_to_str (gdbarch, sol2_core_pid_to_str);

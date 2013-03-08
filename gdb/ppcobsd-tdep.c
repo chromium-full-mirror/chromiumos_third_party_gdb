@@ -1,7 +1,6 @@
 /* Target-dependent code for OpenBSD/powerpc.
 
-   Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2004-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -57,7 +56,7 @@ ppcobsd_supply_gregset (const struct regset *regset,
 }
 
 /* Collect register REGNUM in the general-purpose register set
-   REGSET. from register cache REGCACHE into the buffer specified by
+   REGSET, from register cache REGCACHE into the buffer specified by
    GREGS and LEN.  If REGNUM is -1, do this for all registers in
    REGSET.  */
 
@@ -131,7 +130,7 @@ ppcobsd_sigtramp_frame_sniffer (const struct frame_unwind *self,
   CORE_ADDR pc = get_frame_pc (this_frame);
   CORE_ADDR start_pc = (pc & ~(ppcobsd_page_size - 1));
   const int *offset;
-  char *name;
+  const char *name;
 
   find_pc_partial_function (pc, &name, NULL, NULL);
   if (name)
@@ -208,7 +207,7 @@ ppcobsd_sigtramp_frame_cache (struct frame_info *this_frame, void **this_cache)
   trad_frame_set_reg_addr (cache, tdep->ppc_ctr_regnum, addr);
   addr += tdep->wordsize;
   trad_frame_set_reg_addr (cache, gdbarch_pc_regnum (gdbarch), addr);
-  /* SRR0? */
+  /* SRR0?  */
   addr += tdep->wordsize;
 
   /* Construct the frame ID using the function start.  */
@@ -239,6 +238,7 @@ ppcobsd_sigtramp_frame_prev_register (struct frame_info *this_frame,
 
 static const struct frame_unwind ppcobsd_sigtramp_frame_unwind = {
   SIGTRAMP_FRAME,
+  default_frame_unwind_stop_reason,
   ppcobsd_sigtramp_frame_this_id,
   ppcobsd_sigtramp_frame_prev_register,
   NULL,

@@ -198,13 +198,13 @@ sim_stop_reason (SIM_DESC sd, enum sim_stop *reason, int *sigrc)
   case was_continuing:
     *reason = sim_stopped;
     if (status.signal == 0)
-      *sigrc = TARGET_SIGNAL_TRAP;
+      *sigrc = GDB_SIGNAL_TRAP;
     else
       *sigrc = status.signal;
     break;
   case was_trap:
     *reason = sim_stopped;
-    *sigrc = TARGET_SIGNAL_TRAP;
+    *sigrc = GDB_SIGNAL_TRAP;
     break;
   case was_exited:
     *reason = sim_exited;
@@ -259,6 +259,11 @@ sim_do_command (SIM_DESC sd, char *cmd)
   }
 }
 
+char **
+sim_complete_command (SIM_DESC sd, char *text, char *word)
+{
+  return NULL;
+}
 
 /* Polling, if required */
 
@@ -389,9 +394,4 @@ zalloc(long size)
     error("xmalloc failed\n");
   memset(memory, 0, size);
   return memory;
-}
-
-void zfree(void *data)
-{
-  free(data);
 }

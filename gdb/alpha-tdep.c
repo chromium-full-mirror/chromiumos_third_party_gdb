@@ -1,7 +1,6 @@
 /* Target-dependent code for the ALPHA architecture, for GDB, the GNU Debugger.
 
-   Copyright (C) 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002,
-   2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1993-2003, 2005-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -64,6 +63,7 @@ static const int stq_opcode = 0x2d;
 /* Branch instruction format */
 #define BR_RA(insn) MEM_RA(insn)
 
+static const int br_opcode = 0x30;
 static const int bne_opcode = 0x3d;
 
 /* Operate instruction format */
@@ -80,7 +80,7 @@ static const int subq_function = 0x29;
 /* Return the name of the REGNO register.
 
    An empty name corresponds to a register number that used to
-   be used for a virtual register. That virtual register has
+   be used for a virtual register.  That virtual register has
    been removed, but the index is still reserved to maintain
    compatibility with existing remote alpha targets.  */
 
@@ -110,8 +110,7 @@ alpha_register_name (struct gdbarch *gdbarch, int regno)
 static int
 alpha_cannot_fetch_register (struct gdbarch *gdbarch, int regno)
 {
-  return (regno == ALPHA_ZERO_REGNUM
-          || strlen (alpha_register_name (gdbarch, regno)) == 0);
+  return (strlen (alpha_register_name (gdbarch, regno)) == 0);
 }
 
 static int
@@ -228,30 +227,38 @@ alpha_sts (struct gdbarch *gdbarch, void *out, const void *in)
    register is a floating point register and memory format is float, as the
    register format must be double or memory format is an integer with 4
    bytes or less, as the representation of integers in floating point
-   registers is different. */
+   registers is different.  */
 
 static int
-alpha_convert_register_p (struct gdbarch *gdbarch, int regno, struct type *type)
+alpha_convert_register_p (struct gdbarch *gdbarch, int regno,
+			  struct type *type)
 {
   return (regno >= ALPHA_FP0_REGNUM && regno < ALPHA_FP0_REGNUM + 31
 	  && TYPE_LENGTH (type) != 8);
 }
 
-static void
+static int
 alpha_register_to_value (struct frame_info *frame, int regnum,
-			 struct type *valtype, gdb_byte *out)
+			 struct type *valtype, gdb_byte *out,
+			int *optimizedp, int *unavailablep)
 {
+  struct gdbarch *gdbarch = get_frame_arch (frame);
   gdb_byte in[MAX_REGISTER_SIZE];
 
-  frame_register_read (frame, regnum, in);
-  switch (TYPE_LENGTH (valtype))
+  /* Convert to TYPE.  */
+  if (!get_frame_register_bytes (frame, regnum, 0,
+				 register_size (gdbarch, regnum),
+				 in, optimizedp, unavailablep))
+    return 0;
+
+  if (TYPE_LENGTH (valtype) == 4)
     {
-    case 4:
-      alpha_sts (get_frame_arch (frame), out, in);
-      break;
-    default:
-      error (_("Cannot retrieve value from floating point register"));
+      alpha_sts (gdbarch, out, in);
+      *optimizedp = *unavailablep = 0;
+      return 1;
     }
+
+  error (_("Cannot retrieve value from floating point register"));
 }
 
 static void
@@ -492,7 +499,8 @@ alpha_extract_return_value (struct type *valtype, struct regcache *regcache,
 	  break;
 
 	default:
-	  internal_error (__FILE__, __LINE__, _("unknown floating point width"));
+	  internal_error (__FILE__, __LINE__,
+			  _("unknown floating point width"));
 	}
       break;
 
@@ -515,7 +523,8 @@ alpha_extract_return_value (struct type *valtype, struct regcache *regcache,
 	  break;
 
 	default:
-	  internal_error (__FILE__, __LINE__, _("unknown floating point width"));
+	  internal_error (__FILE__, __LINE__,
+			  _("unknown floating point width"));
 	}
       break;
 
@@ -560,7 +569,8 @@ alpha_store_return_value (struct type *valtype, struct regcache *regcache,
 	  error (_("Cannot set a 128-bit long double return value."));
 
 	default:
-	  internal_error (__FILE__, __LINE__, _("unknown floating point width"));
+	  internal_error (__FILE__, __LINE__,
+			  _("unknown floating point width"));
 	}
       break;
 
@@ -584,7 +594,8 @@ alpha_store_return_value (struct type *valtype, struct regcache *regcache,
 	  error (_("Cannot set a 128-bit long double return value."));
 
 	default:
-	  internal_error (__FILE__, __LINE__, _("unknown floating point width"));
+	  internal_error (__FILE__, __LINE__,
+			  _("unknown floating point width"));
 	}
       break;
 
@@ -601,7 +612,7 @@ alpha_store_return_value (struct type *valtype, struct regcache *regcache,
 }
 
 static enum return_value_convention
-alpha_return_value (struct gdbarch *gdbarch, struct type *func_type,
+alpha_return_value (struct gdbarch *gdbarch, struct value *function,
 		    struct type *type, struct regcache *regcache,
 		    gdb_byte *readbuf, const gdb_byte *writebuf)
 {
@@ -718,7 +729,7 @@ alpha_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR pc)
   /* Can't determine prologue from the symbol table, need to examine
      instructions.  */
 
-  /* Skip the typical prologue instructions. These are the stack adjustment
+  /* Skip the typical prologue instructions.  These are the stack adjustment
      instruction and the instructions that save registers on the stack
      or in the gcc frame.  */
   for (offset = 0; offset < 100; offset += ALPHA_INSN_SIZE)
@@ -747,6 +758,94 @@ alpha_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR pc)
       break;
     }
   return pc + offset;
+}
+
+
+static const int ldl_l_opcode = 0x2a;
+static const int ldq_l_opcode = 0x2b;
+static const int stl_c_opcode = 0x2e;
+static const int stq_c_opcode = 0x2f;
+
+/* Checks for an atomic sequence of instructions beginning with a LDL_L/LDQ_L
+   instruction and ending with a STL_C/STQ_C instruction.  If such a sequence
+   is found, attempt to step through it.  A breakpoint is placed at the end of 
+   the sequence.  */
+
+static int 
+alpha_deal_with_atomic_sequence (struct frame_info *frame)
+{
+  struct gdbarch *gdbarch = get_frame_arch (frame);
+  struct address_space *aspace = get_frame_address_space (frame);
+  CORE_ADDR pc = get_frame_pc (frame);
+  CORE_ADDR breaks[2] = {-1, -1};
+  CORE_ADDR loc = pc;
+  CORE_ADDR closing_insn; /* Instruction that closes the atomic sequence.  */
+  unsigned int insn = alpha_read_insn (gdbarch, loc);
+  int insn_count;
+  int index;
+  int last_breakpoint = 0; /* Defaults to 0 (no breakpoints placed).  */  
+  const int atomic_sequence_length = 16; /* Instruction sequence length.  */
+  int bc_insn_count = 0; /* Conditional branch instruction count.  */
+
+  /* Assume all atomic sequences start with a LDL_L/LDQ_L instruction.  */
+  if (INSN_OPCODE (insn) != ldl_l_opcode
+      && INSN_OPCODE (insn) != ldq_l_opcode)
+    return 0;
+
+  /* Assume that no atomic sequence is longer than "atomic_sequence_length" 
+     instructions.  */
+  for (insn_count = 0; insn_count < atomic_sequence_length; ++insn_count)
+    {
+      loc += ALPHA_INSN_SIZE;
+      insn = alpha_read_insn (gdbarch, loc);
+
+      /* Assume that there is at most one branch in the atomic
+	 sequence.  If a branch is found, put a breakpoint in 
+	 its destination address.  */
+      if (INSN_OPCODE (insn) >= br_opcode)
+	{
+	  int immediate = (insn & 0x001fffff) << 2;
+
+	  immediate = (immediate ^ 0x400000) - 0x400000;
+
+	  if (bc_insn_count >= 1)
+	    return 0; /* More than one branch found, fallback 
+			 to the standard single-step code.  */
+
+	  breaks[1] = loc + ALPHA_INSN_SIZE + immediate;
+
+	  bc_insn_count++;
+	  last_breakpoint++;
+	}
+
+      if (INSN_OPCODE (insn) == stl_c_opcode
+	  || INSN_OPCODE (insn) == stq_c_opcode)
+	break;
+    }
+
+  /* Assume that the atomic sequence ends with a STL_C/STQ_C instruction.  */
+  if (INSN_OPCODE (insn) != stl_c_opcode
+      && INSN_OPCODE (insn) != stq_c_opcode)
+    return 0;
+
+  closing_insn = loc;
+  loc += ALPHA_INSN_SIZE;
+
+  /* Insert a breakpoint right after the end of the atomic sequence.  */
+  breaks[0] = loc;
+
+  /* Check for duplicated breakpoints.  Check also for a breakpoint
+     placed (branch instruction's destination) anywhere in sequence.  */ 
+  if (last_breakpoint
+      && (breaks[1] == breaks[0]
+	  || (breaks[1] >= pc && breaks[1] <= closing_insn)))
+    last_breakpoint = 0;
+
+  /* Effectively inserts the breakpoints.  */
+  for (index = 0; index <= last_breakpoint; index++)
+    insert_single_step_breakpoint (gdbarch, aspace, breaks[index]);
+
+  return 1;
 }
 
 
@@ -900,7 +999,7 @@ alpha_sigtramp_frame_sniffer (const struct frame_unwind *self,
 {
   struct gdbarch *gdbarch = get_frame_arch (this_frame);
   CORE_ADDR pc = get_frame_pc (this_frame);
-  char *name;
+  const char *name;
 
   /* NOTE: cagney/2004-04-30: Do not copy/clone this code.  Instead
      look at tramp-frame.h and other simplier per-architecture
@@ -923,6 +1022,7 @@ alpha_sigtramp_frame_sniffer (const struct frame_unwind *self,
 
 static const struct frame_unwind alpha_sigtramp_frame_unwind = {
   SIGTRAMP_FRAME,
+  default_frame_unwind_stop_reason,
   alpha_sigtramp_frame_this_id,
   alpha_sigtramp_frame_prev_register,
   NULL,
@@ -992,7 +1092,7 @@ alpha_heuristic_proc_start (struct gdbarch *gdbarch, CORE_ADDR pc)
   /* It's not clear to me why we reach this point when stopping quietly,
      but with this test, at least we don't print out warnings for every
      child forked (eg, on decstation).  22apr93 rich@cygnus.com.  */
-  if (inf->stop_soon == NO_STOP_QUIETLY)
+  if (inf->control.stop_soon == NO_STOP_QUIETLY)
     {
       static int blurb_printed = 0;
 
@@ -1058,8 +1158,7 @@ alpha_heuristic_analyze_probing_loop (struct gdbarch *gdbarch, CORE_ADDR *pc,
 
      If anything different is found, the function returns without
      changing PC and FRAME_SIZE.  Otherwise, PC will point immediately
-     after this sequence, and FRAME_SIZE will be updated.
-  */
+     after this sequence, and FRAME_SIZE will be updated.  */
 
   /* lda     REG_INDEX,NB_OF_ITERATIONS */
 
@@ -1175,7 +1274,7 @@ alpha_heuristic_frame_unwind_cache (struct frame_info *this_frame,
 	      if (word & 0x8000)
 		{
 		  /* Consider only the first stack allocation instruction
-		     to contain the static size of the frame. */
+		     to contain the static size of the frame.  */
 		  if (frame_size == 0)
 		    frame_size = (-word) & 0xffff;
 		}
@@ -1231,10 +1330,11 @@ alpha_heuristic_frame_unwind_cache (struct frame_info *this_frame,
 		 So we recognize only a few registers (t7, t9, ra) within
 		 the procedure prologue as valid return address registers.
 		 If we encounter a return instruction, we extract the
-		 the return address register from it.
+		 return address register from it.
 
 		 FIXME: Rewriting GDB to access the procedure descriptors,
-		 e.g. via the minimal symbol table, might obviate this hack.  */
+		 e.g. via the minimal symbol table, might obviate this
+		 hack.  */
 	      if (return_reg == -1
 		  && cur_pc < (start_pc + 80)
 		  && (reg == ALPHA_T7_REGNUM
@@ -1338,6 +1438,7 @@ alpha_heuristic_frame_prev_register (struct frame_info *this_frame,
 
 static const struct frame_unwind alpha_heuristic_frame_unwind = {
   NORMAL_FRAME,
+  default_frame_unwind_stop_reason,
   alpha_heuristic_frame_this_id,
   alpha_heuristic_frame_prev_register,
   NULL,
@@ -1409,7 +1510,11 @@ alpha_supply_int_regs (struct regcache *regcache, int regno,
       regcache_raw_supply (regcache, i, regs + i * 8);
 
   if (regno == ALPHA_ZERO_REGNUM || regno == -1)
-    regcache_raw_supply (regcache, ALPHA_ZERO_REGNUM, NULL);
+    {
+      const gdb_byte zero[8] = { 0 };
+
+      regcache_raw_supply (regcache, ALPHA_ZERO_REGNUM, zero);
+    }
 
   if (regno == ALPHA_PC_REGNUM || regno == -1)
     regcache_raw_supply (regcache, ALPHA_PC_REGNUM, pc);
@@ -1510,7 +1615,7 @@ alpha_next_pc (struct frame_info *frame, CORE_ADDR pc)
 
   insn = alpha_read_insn (gdbarch, pc);
 
-  /* Opcode is top 6 bits. */
+  /* Opcode is top 6 bits.  */
   op = (insn >> 26) & 0x3f;
 
   if (op == 0x1a)
@@ -1673,7 +1778,7 @@ alpha_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   tdep->sc_regs_offset = 4 * 8;
   tdep->sc_fpregs_offset = tdep->sc_regs_offset + 32 * 8 + 8;
 
-  tdep->jb_pc = -1;	/* longjmp support not enabled by default  */
+  tdep->jb_pc = -1;	/* longjmp support not enabled by default.  */
 
   tdep->return_in_memory = alpha_return_in_memory_always;
 
@@ -1731,6 +1836,9 @@ alpha_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_decr_pc_after_break (gdbarch, ALPHA_INSN_SIZE);
   set_gdbarch_cannot_step_breakpoint (gdbarch, 1);
 
+  /* Handles single stepping of atomic sequences.  */
+  set_gdbarch_software_single_step (gdbarch, alpha_deal_with_atomic_sequence);
+
   /* Hook in ABI-specific overrides, if they have been registered.  */
   gdbarch_init_osabi (info, gdbarch);
 
@@ -1779,6 +1887,7 @@ If you are debugging a stripped executable, GDB needs to search through the\n\
 program for the start of a function.  This command sets the distance of the\n\
 search.  The only need to set it is when debugging a stripped executable."),
 			    reinit_frame_cache_sfunc,
-			    NULL, /* FIXME: i18n: The distance searched for the start of a function is \"%d\".  */
+			    NULL, /* FIXME: i18n: The distance searched for
+				     the start of a function is \"%d\".  */
 			    &setlist, &showlist);
 }

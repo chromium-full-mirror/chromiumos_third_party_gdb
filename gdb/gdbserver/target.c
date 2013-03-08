@@ -1,6 +1,6 @@
 /* Target operations for the remote server for GDB.
-   Copyright (C) 2002, 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2002, 2004-2005, 2007-2012 Free Software Foundation,
+   Inc.
 
    Contributed by MontaVista Software.
 
@@ -31,21 +31,7 @@ set_desired_inferior (int use_general)
   if (use_general == 1)
     found = find_thread_ptid (general_thread);
   else
-    {
-      found = NULL;
-
-      /* If we are continuing any (all) thread(s), use step_thread
-	 to decide which thread to step and/or send the specified
-	 signal to.  */
-      if ((!ptid_equal (step_thread, null_ptid)
-	   && !ptid_equal (step_thread, minus_one_ptid))
-	  && (ptid_equal (cont_thread, null_ptid)
-	      || ptid_equal (cont_thread, minus_one_ptid)))
-	found = find_thread_ptid (step_thread);
-
-      if (found == NULL)
-	found = find_thread_ptid (cont_thread);
-    }
+    found = find_thread_ptid (cont_thread);
 
   if (found == NULL)
     current_inferior = (struct thread_info *) all_threads.head;
@@ -77,7 +63,7 @@ write_inferior_memory (CORE_ADDR memaddr, const unsigned char *myaddr,
 
   buffer = xmalloc (len);
   memcpy (buffer, myaddr, len);
-  check_mem_write (memaddr, buffer, len);
+  check_mem_write (memaddr, buffer, myaddr, len);
   res = (*the_target->write_memory) (memaddr, buffer, len);
   free (buffer);
   buffer = NULL;
@@ -98,11 +84,11 @@ mywait (ptid_t ptid, struct target_waitstatus *ourstatus, int options,
 
   if (ourstatus->kind == TARGET_WAITKIND_EXITED)
     fprintf (stderr,
-	     "\nChild exited with status %d\n", ourstatus->value.sig);
+	     "\nChild exited with status %d\n", ourstatus->value.integer);
   else if (ourstatus->kind == TARGET_WAITKIND_SIGNALLED)
     fprintf (stderr, "\nChild terminated with signal = 0x%x (%s)\n",
-	     target_signal_to_host (ourstatus->value.sig),
-	     target_signal_to_name (ourstatus->value.sig));
+	     gdb_signal_to_host (ourstatus->value.sig),
+	     gdb_signal_to_name (ourstatus->value.sig));
 
   if (connected_wait)
     server_waiting = 0;
@@ -139,18 +125,18 @@ target_pid_to_str (ptid_t ptid)
   static char buf[80];
 
   if (ptid_equal (ptid, minus_one_ptid))
-    snprintf (buf, sizeof (buf), "<all threads>");
+    xsnprintf (buf, sizeof (buf), "<all threads>");
   else if (ptid_equal (ptid, null_ptid))
-    snprintf (buf, sizeof (buf), "<null thread>");
+    xsnprintf (buf, sizeof (buf), "<null thread>");
   else if (ptid_get_tid (ptid) != 0)
-    snprintf (buf, sizeof (buf), "Thread %d.0x%lx",
-	      ptid_get_pid (ptid), ptid_get_tid (ptid));
+    xsnprintf (buf, sizeof (buf), "Thread %d.0x%lx",
+	       ptid_get_pid (ptid), ptid_get_tid (ptid));
   else if (ptid_get_lwp (ptid) != 0)
-    snprintf (buf, sizeof (buf), "LWP %d.%ld",
-	      ptid_get_pid (ptid), ptid_get_lwp (ptid));
+    xsnprintf (buf, sizeof (buf), "LWP %d.%ld",
+	       ptid_get_pid (ptid), ptid_get_lwp (ptid));
   else
-    snprintf (buf, sizeof (buf), "Process %d",
-	      ptid_get_pid (ptid));
+    xsnprintf (buf, sizeof (buf), "Process %d",
+	       ptid_get_pid (ptid));
 
   return buf;
 }
@@ -171,11 +157,11 @@ target_waitstatus_to_string (const struct target_waitstatus *ws)
       break;
     case TARGET_WAITKIND_STOPPED:
       sprintf (buf, "%sstopped, signal = %s",
-	       kind_str, target_signal_to_name (ws->value.sig));
+	       kind_str, gdb_signal_to_name (ws->value.sig));
       break;
     case TARGET_WAITKIND_SIGNALLED:
       sprintf (buf, "%ssignalled, signal = %s",
-	       kind_str, target_signal_to_name (ws->value.sig));
+	       kind_str, gdb_signal_to_name (ws->value.sig));
       break;
     case TARGET_WAITKIND_LOADED:
       sprintf (buf, "%sloaded", kind_str);

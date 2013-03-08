@@ -1,6 +1,6 @@
 # cpexprs.exp - C++ expressions tests
 #
-# Copyright 2008, 2009, 2010 Free Software Foundation, Inc.
+# Copyright 2008-2012 Free Software Foundation, Inc.
 #
 # Contributed by Red Hat, originally written by Keith Seitz.
 #
@@ -24,9 +24,14 @@
 proc test_breakpoint {func} {
     global DEC
 
-    # Restart every time
-    if {![runto_main]} {
-	perror "could not run to main when attempting to break at $func"
+    # Return to the top of the test function every time.
+    delete_breakpoints
+    if { ! [gdb_breakpoint test_function] } {
+	fail "set test_function breakpoint for $func"
+    } elseif { [gdb_test "continue" \
+		    "Continuing.\r\n\r\nBreakpoint $DEC+,.*test_function.*" \
+		    ""] != 0 } {
+	fail "continue to test_function for $func"
     } else {
 	gdb_breakpoint "$func"
 	set i [expr {[string last : $func] + 1}]
@@ -113,7 +118,7 @@ set ADDR "0x$HEX+"; # address
 array set all_functions {}
 
 # "Normal" functions/methods
-add {main} \
+add {test_function} \
     {int (int, char **)} \
     - \
     -
@@ -191,13 +196,7 @@ add {base::~base} \
     - \
     -
 
-# Overloaded methods (all are const -- we try to use the void
-# method with and without specifying "const")
-# GOOGLE LOCAL: disable the without-const case until it's fixed.
-#add {base::overload(void)} \
-#    {int (const base * const)} \
-#    - \
-#    {base::overload(void) const}
+# Overloaded methods (all are const)
 add {base::overload(void) const} \
     {int (const base * const)} \
     - \
@@ -664,10 +663,6 @@ add {policyd5::function} \
     {operation_1<T>::function}
 
 # Start the test
-if {$tracelevel} {
-    strace $tracelevel
-}
-
 if {[skip_cplus_tests]} { continue }
 
 # On SPU this test fails because the executable exceeds local storage size.
@@ -679,24 +674,15 @@ if { [istarget "spu*-*-*"] } {
 # test running programs
 #
 
-set testfile "cpexprs"
-set srcfile "${testfile}.cc"
-set binfile [file join $objdir $subdir $testfile]
+standard_testfile .cc
 
-if  {[gdb_compile [file join $srcdir $subdir $srcfile] $binfile \
-	  executable {debug c++}] != "" } {
-    untested "$testfile.exp"
+if {[get_compiler_info "c++"]} {
     return -1
 }
 
-if {[get_compiler_info $binfile "c++"]} {
+if {[prepare_for_testing $testfile.exp $testfile $srcfile {debug c++}]} {
     return -1
 }
-
-gdb_exit
-gdb_start
-gdb_reinitialize_dir [file join $srcdir $subdir]
-gdb_load $binfile
 
 if {![runto_main]} {
     perror "couldn't run to breakpoint"
@@ -718,11 +704,32 @@ foreach name [get_functions list] {
 
 # Running to breakpoint -- use any function we can "list"
 foreach name [get_functions list] {
-    # Skip "main", since test_breakpoint uses it
-    if {[string compare $name "main"] != 0} {
+    # Skip "test_function", since test_breakpoint uses it
+    if {[string compare $name "test_function"] != 0} {
 	test_breakpoint $name
     }
 }
+
+# Test c/v gets recognized even without quoting.
+foreach cv {{} { const} { volatile} { const volatile}} {
+  set test "p 'CV::m(int)$cv'"
+  gdb_test_multiple $test $test {
+      -re "( = {.*} 0x\[0-9a-f\]+ <CV::m.*>)\r\n$gdb_prompt $" {
+	  # = {void (CV * const, CV::t)} 0x400944 <CV::m(int)>
+	  set correct $expect_out(1,string)
+	  pass $test
+      }
+  }
+  if {"$cv" != ""} {
+      setup_kfail c++/14186 *-*-*
+  }
+  gdb_test "p CV::m(int)$cv" [string_to_regexp $correct]
+}
+
+# Test TYPENAME:: gets recognized even in parentheses.
+gdb_test "p CV_f(int)"   { = {int \(int\)} 0x[0-9a-f]+ <CV_f\(int\)>}
+gdb_test "p CV_f(CV::t)" { = {int \(int\)} 0x[0-9a-f]+ <CV_f\(int\)>}
+gdb_test "p CV_f(CV::i)" " = 43"
 
 gdb_exit
 return 0

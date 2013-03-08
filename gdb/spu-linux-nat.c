@@ -1,5 +1,5 @@
 /* SPU native-dependent code for GDB, the GNU debugger.
-   Copyright (C) 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2006-2012 Free Software Foundation, Inc.
 
    Contributed by Ulrich Weigand <uweigand@de.ibm.com>.
 
@@ -23,6 +23,7 @@
 #include "gdb_string.h"
 #include "target.h"
 #include "inferior.h"
+#include "inf-child.h"
 #include "inf-ptrace.h"
 #include "regcache.h"
 #include "symfile.h"
@@ -374,7 +375,7 @@ spu_symbol_file_add_from_memory (int inferior_fd)
   nbfd = spu_bfd_open (addr);
   if (nbfd)
     symbol_file_add_from_bfd (nbfd, SYMFILE_VERBOSE | SYMFILE_MAINLINE,
-                              NULL, 0);
+                              NULL, 0, NULL);
 }
 
 
@@ -461,7 +462,7 @@ spu_child_wait (struct target_ops *ops,
 
       /* Claim it exited with unknown signal.  */
       ourstatus->kind = TARGET_WAITKIND_SIGNALLED;
-      ourstatus->value.sig = TARGET_SIGNAL_UNKNOWN;
+      ourstatus->value.sig = GDB_SIGNAL_UNKNOWN;
       return inferior_ptid;
     }
 

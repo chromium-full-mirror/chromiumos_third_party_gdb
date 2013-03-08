@@ -1,5 +1,5 @@
 /* Serial port emulation via sockets.
-   Copyright (C) 1998, Free Software Foundation, Inc.
+   Copyright (C) 1998, 2012 Free Software Foundation, Inc.
 
 This file is part of the GNU simulators.
 
@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 /* FIXME: later add a device ptr arg */
 extern int dv_sockser_status (SIM_DESC);
 int dv_sockser_write (SIM_DESC, unsigned char);
+int dv_sockser_write_buffer (SIM_DESC, const unsigned char *, unsigned);
 int dv_sockser_read (SIM_DESC);
 
 #endif /* DV_SOCKSER_H */

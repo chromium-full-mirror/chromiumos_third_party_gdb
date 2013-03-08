@@ -24,6 +24,7 @@ EXECUTABLES = \
   fun_in_declare/foo \
   funcall_param/foo \
   homonym/homonym_main \
+  info_types \
   interface/foo \
   lang_switch/lang_switch \
   nested/hello \
@@ -53,11 +54,13 @@ clean mostlyclean:
 	-find . -name 'b~*.ad[sb]' -print | xargs rm -f
 	-rm -f *~ a.out xgdb *.x *.ci *.tmp
 	-rm -f *~ *.o a.out xgdb *.x *.ci *.tmp
+	-find . -name '*.dwo' -print | xargs rm -f
+	-find . -name '*.dwp' -print | xargs rm -f
 	-rm -f core core.coremaker coremaker.core corefile $(EXECUTABLES)
 	-rm -f $(MISCELLANEOUS) twice-tmp.c
 
 distclean maintainer-clean realclean: clean
 	-rm -f *~ core
 	-rm -f Makefile config.status config.log
-	-rm -f *-init.exp
+	-rm -f *-init.exp gdb.log gdb.sum
 	-rm -fr *.log summary detail *.plog *.sum *.psum site.*

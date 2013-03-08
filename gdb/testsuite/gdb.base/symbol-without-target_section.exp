@@ -1,4 +1,4 @@
-# Copyright 2010 Free Software Foundation, Inc.
+# Copyright 2010-2012 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -32,9 +32,6 @@ if {[build_executable ${testfile}.exp ${binmainfile} ${srcmainfile} {debug}] == 
     return -1
 }
 clean_restart ${binlibfile}
-
-# Turn on symbol loading messages, the next test looks for it.
-gdb_test_no_output "set print symbol-loading on"
 
 gdb_test "add-symbol-file ${objdir}/${subdir}/${binmainfile} 0" \
     "Reading symbols from .*" \

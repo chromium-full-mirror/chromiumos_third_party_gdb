@@ -24,6 +24,11 @@ namespace A
     return 33;
   }
 
+  int
+  entry (C c)
+  {
+    return 44;
+  }
 }
 
 struct B
@@ -226,6 +231,16 @@ namespace P {
 
 //------------
 
+class R {
+  public:
+    int rfoo(){ return 31; }
+    int rbar(){
+      return 1; // marker1
+    }
+};
+
+//------------
+
 int
 main ()
 {
@@ -235,6 +250,7 @@ main ()
   A::first (c);
   first (0, c);
   second (0, 0, c, 0, 0);
+  entry (c);
   A::first (b.c);
 
   E::O eo;
@@ -298,6 +314,10 @@ main ()
   q + 5.0f;
 
   ++q;
+
+  R r;
+  r.rbar();
+  r.rfoo();
 
   return first (0, c) + foo (eo) +
          foo (eo, eo) + foo (eo, eo, 1)  +

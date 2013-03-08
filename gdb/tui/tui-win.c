@@ -1,7 +1,6 @@
 /* TUI window generic functions.
 
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2006, 2007, 2008,
-   2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 1998-2004, 2006-2012 Free Software Foundation, Inc.
 
    Contributed by Hewlett-Packard Company.
 
@@ -108,7 +107,7 @@ static void parse_scrolling_args (char *,
 #endif
 
 /* Possible values for tui-border-kind variable.  */
-static const char *tui_border_kind_enums[] = {
+static const char *const tui_border_kind_enums[] = {
   "space",
   "ascii",
   "acs",
@@ -116,7 +115,7 @@ static const char *tui_border_kind_enums[] = {
 };
 
 /* Possible values for tui-border-mode and tui-active-border-mode.  */
-static const char *tui_border_mode_enums[] = {
+static const char *const tui_border_mode_enums[] = {
   "normal",
   "standout",
   "reverse",
@@ -562,7 +561,8 @@ tui_scroll_left (struct tui_win_info *win_to_scroll,
          window do nothing since the term should handle it.  */
       if (win_to_scroll == TUI_SRC_WIN
 	  || win_to_scroll == TUI_DISASM_WIN)
-	tui_horizontal_source_scroll (win_to_scroll, LEFT_SCROLL, _num_to_scroll);
+	tui_horizontal_source_scroll (win_to_scroll, LEFT_SCROLL,
+				      _num_to_scroll);
     }
 }
 
@@ -584,7 +584,8 @@ tui_scroll_right (struct tui_win_info *win_to_scroll,
          window do nothing since the term should handle it.  */
       if (win_to_scroll == TUI_SRC_WIN
 	  || win_to_scroll == TUI_DISASM_WIN)
-	tui_horizontal_source_scroll (win_to_scroll, RIGHT_SCROLL, _num_to_scroll);
+	tui_horizontal_source_scroll (win_to_scroll, RIGHT_SCROLL,
+				      _num_to_scroll);
     }
 }
 
@@ -648,8 +649,8 @@ tui_refresh_all_win (void)
 }
 
 
-/* Resize all the windows based on the the terminal size.  This
-   function gets called from within the readline sinwinch handler.  */
+/* Resize all the windows based on the terminal size.  This function
+   gets called from within the readline sinwinch handler.  */
 void
 tui_resize_all (void)
 {
@@ -689,13 +690,16 @@ tui_resize_all (void)
 	  if (height_diff < 0)
 	    cmd_split_diff--;
 	  else
-	    cmd_split_diff++;
-	}
+           cmd_split_diff++;
+       }
       /* Now adjust each window.  */
-      clear ();
+      /* erase + clearok are used instead of a straightforward clear as
+         AIX 5.3 does not define clear.  */
+      erase ();
+      clearok (curscr, TRUE);
       refresh ();
       switch (cur_layout)
-	{
+       {
 	case SRC_COMMAND:
 	case DISASSEM_COMMAND:
 	  first_win = (struct tui_win_info *) (tui_source_windows ())->list[0];
@@ -712,6 +716,7 @@ tui_resize_all (void)
 	  else
 	    new_height = first_win->generic.height + split_diff;
 
+	  locator->origin.y = new_height + 1;
 	  make_invisible_and_set_new_height (first_win, new_height);
 	  TUI_CMD_WIN->generic.origin.y = locator->origin.y + 1;
 	  TUI_CMD_WIN->generic.width += width_diff;
@@ -734,7 +739,8 @@ tui_resize_all (void)
 	    {
 	      first_win = TUI_DATA_WIN;
 	      first_win->generic.width += width_diff;
-	      second_win = (struct tui_win_info *) (tui_source_windows ())->list[0];
+	      second_win = (struct tui_win_info *)
+		(tui_source_windows ())->list[0];
 	      second_win->generic.width += width_diff;
 	    }
 	  /* Change the first window's height/width.  */
@@ -776,8 +782,9 @@ tui_resize_all (void)
 
 	  /* Change the command window's height/width.  */
 	  TUI_CMD_WIN->generic.origin.y = locator->origin.y + 1;
-	  make_invisible_and_set_new_height (
-			     TUI_CMD_WIN, TUI_CMD_WIN->generic.height + cmd_split_diff);
+	  make_invisible_and_set_new_height (TUI_CMD_WIN,
+					     TUI_CMD_WIN->generic.height
+					     + cmd_split_diff);
 	  make_visible_with_new_height (first_win);
 	  make_visible_with_new_height (second_win);
 	  make_visible_with_new_height (TUI_CMD_WIN);
@@ -799,7 +806,6 @@ tui_resize_all (void)
 	      tui_win_list[win_type] = (struct tui_win_info *) NULL;
 	    }
 	}
-      tui_set_win_resized_to (TRUE);
       /* Turn keypad back on, unless focus is in the command
 	 window.  */
       if (win_with_focus != TUI_CMD_WIN)
@@ -935,7 +941,8 @@ The window name specified must be valid and visible.\n"));
 	tui_refresh_data_win ();
       xfree (buf_ptr);
       printf_filtered (_("Focus set to %s window.\n"),
-		       tui_win_name ((struct tui_gen_win_info *) tui_win_with_focus ()));
+		       tui_win_name ((struct tui_gen_win_info *)
+				     tui_win_with_focus ()));
     }
   else
     warning (_("Incorrect Number of Arguments.\n%s"), FOCUS_USAGE);
@@ -1228,8 +1235,9 @@ tui_adjust_win_heights (struct tui_win_info *primary_win_info,
 						  first_win,
 				 first_win->generic.height + first_split_diff);
 		  second_win->generic.origin.y = first_win->generic.height - 1;
-		  make_invisible_and_set_new_height (
-		    second_win, second_win->generic.height + second_split_diff);
+		  make_invisible_and_set_new_height (second_win,
+						     second_win->generic.height
+						     + second_split_diff);
 		  TUI_CMD_WIN->generic.origin.y = locator->origin.y + 1;
 		  make_invisible_and_set_new_height (TUI_CMD_WIN, new_height);
 		}
@@ -1267,8 +1275,8 @@ tui_adjust_win_heights (struct tui_win_info *primary_win_info,
 		  if ((TUI_CMD_WIN->generic.height + diff) < 1)
 		    make_invisible_and_set_new_height (TUI_CMD_WIN, 1);
 		  else
-		    make_invisible_and_set_new_height (
-				     TUI_CMD_WIN, TUI_CMD_WIN->generic.height + diff);
+		    make_invisible_and_set_new_height (TUI_CMD_WIN,
+						       TUI_CMD_WIN->generic.height + diff);
 		}
 	      make_visible_with_new_height (TUI_CMD_WIN);
 	      make_visible_with_new_height (second_win);
@@ -1331,8 +1339,9 @@ make_invisible_and_set_new_height (struct tui_win_info *win_info,
       /* Delete all data item windows.  */
       for (i = 0; i < win_info->generic.content_size; i++)
 	{
-	  gen_win_info = (struct tui_gen_win_info *) & ((struct tui_win_element *)
-		      win_info->generic.content[i])->which_element.data_window;
+	  gen_win_info = (struct tui_gen_win_info *)
+	    &((struct tui_win_element *)
+	      win_info->generic.content[i])->which_element.data_window;
 	  tui_delete_win (gen_win_info->handle);
 	  gen_win_info->handle = (WINDOW *) NULL;
 	}
@@ -1374,7 +1383,8 @@ make_visible_with_new_height (struct tui_win_info *win_info)
       else if (deprecated_safe_get_selected_frame () != NULL)
 	{
 	  struct tui_line_or_address line;
-	  struct symtab_and_line cursal = get_current_source_symtab_and_line ();
+	  struct symtab_and_line cursal
+	    = get_current_source_symtab_and_line ();
 	  struct frame_info *frame = deprecated_safe_get_selected_frame ();
 	  struct gdbarch *gdbarch = get_frame_arch (frame);
 
@@ -1403,6 +1413,14 @@ make_visible_with_new_height (struct tui_win_info *win_info)
     case CMD_WIN:
       win_info->detail.command_info.cur_line = 0;
       win_info->detail.command_info.curch = 0;
+#ifdef HAVE_WRESIZE
+      wresize (TUI_CMD_WIN->generic.handle,
+	       TUI_CMD_WIN->generic.height,
+	       TUI_CMD_WIN->generic.width);
+#endif
+      mvwin (TUI_CMD_WIN->generic.handle,
+	     TUI_CMD_WIN->generic.origin.y,
+	     TUI_CMD_WIN->generic.origin.x);
       wmove (win_info->generic.handle,
 	     win_info->detail.command_info.cur_line,
 	     win_info->detail.command_info.curch);
@@ -1568,13 +1586,16 @@ parse_scrolling_args (char *arg,
 	      ;
 
 	  if (*buf_ptr != (char) 0)
-	    wname = buf_ptr;
+	    {
+	      wname = buf_ptr;
+
+	      /* Validate the window name.  */
+	      for (i = 0; i < strlen (wname); i++)
+		wname[i] = toupper (wname[i]);
+	    }
 	  else
 	    wname = "?";
 	  
-	  /* Validate the window name.  */
-	  for (i = 0; i < strlen (wname); i++)
-	    wname[i] = toupper (wname[i]);
 	  *win_to_scroll = tui_partial_win_by_name (wname);
 
 	  if (*win_to_scroll == (struct tui_win_info *) NULL

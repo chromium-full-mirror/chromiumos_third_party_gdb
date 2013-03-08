@@ -1,7 +1,6 @@
 /* GDB Notifications to Observers.
 
-   Copyright (C) 2003, 2004, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2004, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -19,9 +18,9 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 /* An observer is an entity who is interested in being notified when GDB
-   reaches certain states, or certain events occur in GDB. The entity being
-   observed is called the Subject. To receive notifications, the observer
-   attaches a callback to the subject. One subject can have several
+   reaches certain states, or certain events occur in GDB.  The entity being
+   observed is called the Subject.  To receive notifications, the observer
+   attaches a callback to the subject.  One subject can have several
    observers.
 
    This file implements an internal generic low-level event notification
@@ -31,15 +30,15 @@
    for all possible notifications.
 
    The current implementation of the generic observer provides support
-   for contextual data. This contextual data is given to the subject
-   when attaching the callback. In return, the subject will provide
+   for contextual data.  This contextual data is given to the subject
+   when attaching the callback.  In return, the subject will provide
    this contextual data back to the observer as a parameter of the
    callback.
 
    FIXME: The current support for the contextual data is only partial,
    as it lacks a mechanism that would deallocate this data when the
-   callback is detached. This is not a problem so far, as this contextual
-   data is only used internally to hold a function pointer. Later on,
+   callback is detached.  This is not a problem so far, as this contextual
+   data is only used internally to hold a function pointer.  Later on,
    if a certain observer needs to provide support for user-level
    contextual data, then the generic notification mechanism will need
    need to be enhanced to allow the observer to provide a routine to
@@ -181,6 +180,11 @@ generic_observer_notify (struct observer_list *subject, const void *args)
 int observer_test_first_observer = 0;
 int observer_test_second_observer = 0;
 int observer_test_third_observer = 0;
+
+/* Provide prototypes to silence -Wmissing-prototypes.  */
+extern void observer_test_first_notification_function (int arg);
+extern void observer_test_second_notification_function (int arg);
+extern void observer_test_third_notification_function (int arg);
 
 void
 observer_test_first_notification_function (int arg)

@@ -1,6 +1,6 @@
 /* QNX Neutrino specific low level interface, for the remote server
    for GDB.
-   Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -19,6 +19,7 @@
 
 
 #include "server.h"
+#include "gdbthread.h"
 #include "nto-low.h"
 
 #include <limits.h>
@@ -174,7 +175,7 @@ do_attach (pid_t pid)
       close (nto_inferior.ctl_fd);
       init_nto_inferior (&nto_inferior);
     }
-  snprintf (nto_inferior.nto_procfs_path, PATH_MAX - 1, "/proc/%d/as", pid);
+  xsnprintf (nto_inferior.nto_procfs_path, PATH_MAX - 1, "/proc/%d/as", pid);
   nto_inferior.ctl_fd = open (nto_inferior.nto_procfs_path, O_RDWR);
   if (nto_inferior.ctl_fd == -1)
     {
@@ -531,14 +532,14 @@ nto_wait (ptid_t ptid,
     {
       TRACE ("SSTEP\n");
       ourstatus->kind = TARGET_WAITKIND_STOPPED;
-      ourstatus->value.sig = TARGET_SIGNAL_TRAP;
+      ourstatus->value.sig = GDB_SIGNAL_TRAP;
     }
   /* Was it a breakpoint?  */
   else if (status.flags & trace_mask)
     {
       TRACE ("STOPPED\n");
       ourstatus->kind = TARGET_WAITKIND_STOPPED;
-      ourstatus->value.sig = TARGET_SIGNAL_TRAP;
+      ourstatus->value.sig = GDB_SIGNAL_TRAP;
     }
   else if (status.flags & _DEBUG_FLAG_ISTOP)
     {
@@ -549,7 +550,7 @@ nto_wait (ptid_t ptid,
 	  TRACE ("  SIGNALLED\n");
 	  ourstatus->kind = TARGET_WAITKIND_STOPPED;
 	  ourstatus->value.sig =
-	    target_signal_from_host (status.info.si_signo);
+	    gdb_signal_from_host (status.info.si_signo);
 	  nto_inferior.exit_signo = ourstatus->value.sig;
 	  break;
 	case _DEBUG_WHY_FAULTED:
@@ -563,7 +564,7 @@ nto_wait (ptid_t ptid,
 	  else
 	    {
 	      ourstatus->value.sig =
-		target_signal_from_host (status.info.si_signo);
+		gdb_signal_from_host (status.info.si_signo);
 	      nto_inferior.exit_signo = ourstatus->value.sig;
 	    }
 	  break;
@@ -594,7 +595,7 @@ nto_wait (ptid_t ptid,
 	  TRACE ("REQUESTED\n");
 	  /* We are assuming a requested stop is due to a SIGINT.  */
 	  ourstatus->kind = TARGET_WAITKIND_STOPPED;
-	  ourstatus->value.sig = TARGET_SIGNAL_INT;
+	  ourstatus->value.sig = GDB_SIGNAL_INT;
 	  nto_inferior.exit_signo = 0;
 	  break;
 	}
@@ -635,7 +636,8 @@ nto_fetch_registers (struct regcache *regcache, int regno)
 	    {
 	      const unsigned int registeroffset
 		= the_low_target.register_offset (regno);
-	      supply_register (regcache, regno, ((char *)&greg) + registeroffset);
+	      supply_register (regcache, regno,
+			       ((char *)&greg) + registeroffset);
 	    }
 	}
       else
@@ -913,6 +915,8 @@ static struct target_ops nto_target_ops = {
   nto_wait,
   nto_fetch_registers,
   nto_store_registers,
+  NULL, /* prepare_to_access_memory */
+  NULL, /* done_accessing_memory */
   nto_read_memory,
   nto_write_memory,
   NULL, /* nto_look_up_symbols */

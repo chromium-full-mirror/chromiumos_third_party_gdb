@@ -1,7 +1,6 @@
 /* Target-dependent code for FreeBSD/sparc64.
 
-   Copyright (C) 2003, 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2005, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -85,7 +84,7 @@ sparc64fbsd_collect_fpregset (const struct regset *regset,
 /* Signal trampolines.  */
 
 static int
-sparc64fbsd_pc_in_sigtramp (CORE_ADDR pc, char *name)
+sparc64fbsd_pc_in_sigtramp (CORE_ADDR pc, const char *name)
 {
   return (name && strcmp (name, "__sigtramp") == 0);
 }
@@ -190,7 +189,7 @@ sparc64fbsd_sigtramp_frame_sniffer (const struct frame_unwind *self,
 				    void **this_cache)
 {
   CORE_ADDR pc = get_frame_pc (this_frame);
-  char *name;
+  const char *name;
 
   find_pc_partial_function (pc, &name, NULL, NULL);
   if (sparc64fbsd_pc_in_sigtramp (pc, name))
@@ -202,6 +201,7 @@ sparc64fbsd_sigtramp_frame_sniffer (const struct frame_unwind *self,
 static const struct frame_unwind sparc64fbsd_sigtramp_frame_unwind =
 {
   SIGTRAMP_FRAME,
+  default_frame_unwind_stop_reason,
   sparc64fbsd_sigtramp_frame_this_id,
   sparc64fbsd_sigtramp_frame_prev_register,
   NULL,

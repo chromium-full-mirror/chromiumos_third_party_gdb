@@ -1,7 +1,6 @@
 /* MI Command Set for GDB, the GNU debugger.
-
-   Copyright (C) 2000, 2001, 2003, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2001, 2003, 2007-2012 Free Software Foundation,
+   Inc.
 
    Contributed by Cygnus Solutions (a Red Hat company).
 
@@ -26,13 +25,14 @@
 #include "gdb_string.h"
 
 extern void _initialize_mi_cmds (void);
+
 struct mi_cmd;
 static struct mi_cmd **lookup_table (const char *command);
 static void build_table (struct mi_cmd *commands);
 
-
 struct mi_cmd mi_cmds[] =
 {
+  { "ada-task-info", { NULL, 0 }, mi_cmd_ada_task_info },
   { "add-inferior", { NULL, 0 }, mi_cmd_add_inferior },
   { "break-after", { "ignore", 1 }, NULL },
   { "break-condition", { "cond", 1 }, NULL },
@@ -47,12 +47,17 @@ struct mi_cmd mi_cmds[] =
   { "break-watch", { NULL, 0 }, mi_cmd_break_watch},
   { "data-disassemble", { NULL, 0 }, mi_cmd_disassemble},
   { "data-evaluate-expression", { NULL, 0 }, mi_cmd_data_evaluate_expression},
-  { "data-list-changed-registers", { NULL, 0 }, mi_cmd_data_list_changed_registers},
+  { "data-list-changed-registers", { NULL, 0 },
+    mi_cmd_data_list_changed_registers},
   { "data-list-register-names", { NULL, 0 }, mi_cmd_data_list_register_names},
-  { "data-list-register-values", { NULL, 0 }, mi_cmd_data_list_register_values},
+  { "data-list-register-values", { NULL, 0 },
+    mi_cmd_data_list_register_values},
   { "data-read-memory", { NULL, 0 }, mi_cmd_data_read_memory},
+  { "data-read-memory-bytes", { NULL, 0 }, mi_cmd_data_read_memory_bytes},
   { "data-write-memory", { NULL, 0 }, mi_cmd_data_write_memory},
-  { "data-write-register-values", { NULL, 0 }, mi_cmd_data_write_register_values},
+  { "data-write-memory-bytes", {NULL, 0}, mi_cmd_data_write_memory_bytes},
+  { "data-write-register-values", { NULL, 0 },
+    mi_cmd_data_write_register_values},
   { "enable-timings", { NULL, 0 }, mi_cmd_enable_timings},
   { "enable-pretty-printing", { NULL, 0 }, mi_cmd_enable_pretty_printing},
   { "environment-cd", { NULL, 0 }, mi_cmd_env_cd},
@@ -73,8 +78,10 @@ struct mi_cmd mi_cmds[] =
   { "exec-until", { "until", 1 }, NULL},
   { "file-exec-and-symbols", { "file", 1 }, NULL },
   { "file-exec-file", { "exec-file", 1 }, NULL },
-  { "file-list-exec-source-file", { NULL, 0 }, mi_cmd_file_list_exec_source_file},
-  { "file-list-exec-source-files", { NULL, 0 }, mi_cmd_file_list_exec_source_files },
+  { "file-list-exec-source-file", { NULL, 0 },
+    mi_cmd_file_list_exec_source_file},
+  { "file-list-exec-source-files", { NULL, 0 },
+    mi_cmd_file_list_exec_source_files },
   { "file-symbol-file", { "symbol-file", 1 }, NULL },
   { "gdb-exit", { NULL, 0 }, mi_cmd_gdb_exit},
   { "gdb-set", { "set", 1 }, NULL },
@@ -82,6 +89,7 @@ struct mi_cmd mi_cmds[] =
   { "gdb-version", { "show version", 0 }, 0 },
   { "inferior-tty-set", { NULL, 0 }, mi_cmd_inferior_tty_set},
   { "inferior-tty-show", { NULL, 0 }, mi_cmd_inferior_tty_show},
+  { "info-os", { NULL, 0 }, mi_cmd_info_os},
   { "interpreter-exec", { NULL, 0 }, mi_cmd_interpreter_exec},
   { "list-features", { NULL, 0 }, mi_cmd_list_features},
   { "list-target-features", { NULL, 0 }, mi_cmd_list_target_features},
@@ -132,24 +140,25 @@ struct mi_cmd mi_cmds[] =
   { NULL, }
 };
 
-/* Pointer to the mi command table (built at run time) */
+/* Pointer to the mi command table (built at run time). */
 
 static struct mi_cmd **mi_table;
 
-/* A prime large enough to accomodate the entire command table */
+/* A prime large enough to accomodate the entire command table.  */
 enum
   {
     MI_TABLE_SIZE = 227
   };
 
-/* Exported function used to obtain info from the table */
+/* Exported function used to obtain info from the table.  */
 struct mi_cmd *
 mi_lookup (const char *command)
 {
   return *lookup_table (command);
 }
 
-/* stat collecting */
+/* Used for collecting hash hit/miss statistics.  */
+
 struct mi_cmd_stats
 {
   int hit;
@@ -158,20 +167,21 @@ struct mi_cmd_stats
 };
 struct mi_cmd_stats stats;
 
-/* our lookup function */
+/* Look up a command.  */
+
 static struct mi_cmd **
 lookup_table (const char *command)
 {
   const char *chp;
   unsigned int index = 0;
 
-  /* compute our hash */
+  /* Compute our hash.  */
   for (chp = command; *chp; chp++)
     {
-      /* some what arbitrary */
+      /* We use a somewhat arbitrary formula.  */
       index = ((index << 6) + (unsigned int) *chp) % MI_TABLE_SIZE;
     }
-  /* look it up */
+
   while (1)
     {
       struct mi_cmd **entry = &mi_table[index];
@@ -210,6 +220,7 @@ build_table (struct mi_cmd *commands)
 			_("command `%s' appears to be duplicated"),
 			command->name);
       *entry = command;
+      /* FIXME lose these prints */
       if (0)
 	{
 	  fprintf_unfiltered (gdb_stdlog, "%-30s %2d\n",

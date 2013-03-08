@@ -1,6 +1,5 @@
 /* Helper routines for C++ support in GDB.
-   Copyright (C) 2002, 2003, 2004, 2005, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright (C) 2002-2005, 2007-2012 Free Software Foundation, Inc.
 
    Contributed by MontaVista Software.
 
@@ -35,6 +34,7 @@
 #include "exceptions.h"
 #include "expression.h"
 #include "value.h"
+#include "cp-abi.h"
 
 #include "safe-ctype.h"
 
@@ -73,17 +73,46 @@ struct cmd_list_element *maint_cplus_cmd_list = NULL;
 static void maint_cplus_command (char *arg, int from_tty);
 static void first_component_command (char *arg, int from_tty);
 
-/* Operator validation.
-   NOTE: Multi-byte operators (usually the assignment variety operator)
-   must appear before the single byte version, i.e., "+=" before "+".  */
-static const char *operator_tokens[] =
+/* A list of typedefs which should not be substituted by replace_typedefs.  */
+static const char * const ignore_typedefs[] =
   {
-    "++", "+=", "+", "->*", "->", "--", "-=", "-", "*=", "*", "/=", "/",
-    "%=", "%", "!=", "==", "!", "&&", "<<=", "<<", ">>=", ">>",
-    "<=", "<", ">=", ">", "~", "&=", "&", "|=", "||", "|", "^=", "^",
-    "=", "()", "[]", ",", "new", "delete"
-    /* new[] and delete[] require special whitespace handling */
+    "std::istream", "std::iostream", "std::ostream", "std::string"
   };
+
+static void
+  replace_typedefs (struct demangle_parse_info *info,
+		    struct demangle_component *ret_comp);
+
+/* A convenience function to copy STRING into OBSTACK, returning a pointer
+   to the newly allocated string and saving the number of bytes saved in LEN.
+
+   It does not copy the terminating '\0' byte!  */
+
+static char *
+copy_string_to_obstack (struct obstack *obstack, const char *string,
+			long *len)
+{
+  *len = strlen (string);
+  return obstack_copy (obstack, string, *len);
+}
+
+/* A cleanup wrapper for cp_demangled_name_parse_free.  */
+
+static void
+do_demangled_name_parse_free_cleanup (void *data)
+{
+  struct demangle_parse_info *info = (struct demangle_parse_info *) data;
+
+  cp_demangled_name_parse_free (info);
+}
+
+/* Create a cleanup for C++ name parsing.  */
+
+struct cleanup *
+make_cleanup_cp_demangled_name_parse_free (struct demangle_parse_info *info)
+{
+  return make_cleanup (do_demangled_name_parse_free_cleanup, info);
+}
 
 /* Return 1 if STRING is clearly already in canonical form.  This
    function is conservative; things which it does not recognize are
@@ -116,6 +145,355 @@ cp_already_canonical (const char *string)
     return 0;
 }
 
+/* Inspect the given RET_COMP for its type.  If it is a typedef,
+   replace the node with the typedef's tree.
+
+   Returns 1 if any typedef substitutions were made, 0 otherwise.  */
+
+static int
+inspect_type (struct demangle_parse_info *info,
+	      struct demangle_component *ret_comp)
+{
+  int i;
+  char *name;
+  struct symbol *sym;
+  volatile struct gdb_exception except;
+
+  /* Copy the symbol's name from RET_COMP and look it up
+     in the symbol table.  */
+  name = (char *) alloca (ret_comp->u.s_name.len + 1);
+  memcpy (name, ret_comp->u.s_name.s, ret_comp->u.s_name.len);
+  name[ret_comp->u.s_name.len] = '\0';
+
+  /* Ignore any typedefs that should not be substituted.  */
+  for (i = 0; i < ARRAY_SIZE (ignore_typedefs); ++i)
+    {
+      if (strcmp (name, ignore_typedefs[i]) == 0)
+	return 0;
+    }
+
+  sym = NULL;
+  TRY_CATCH (except, RETURN_MASK_ALL)
+  {
+    sym = lookup_symbol (name, 0, VAR_DOMAIN, 0);
+  }
+
+  if (except.reason >= 0 && sym != NULL)
+    {
+      struct type *otype = SYMBOL_TYPE (sym);
+
+      /* If the type is a typedef, replace it.  */
+      if (TYPE_CODE (otype) == TYPE_CODE_TYPEDEF)
+	{
+	  long len;
+	  int is_anon;
+	  struct type *type;
+	  struct demangle_parse_info *i;
+	  struct ui_file *buf;
+
+	  /* Get the real type of the typedef.  */
+	  type = check_typedef (otype);
+
+	  is_anon = (TYPE_TAG_NAME (type) == NULL
+		     && (TYPE_CODE (type) == TYPE_CODE_ENUM
+			 || TYPE_CODE (type) == TYPE_CODE_STRUCT
+			 || TYPE_CODE (type) == TYPE_CODE_UNION));
+	  if (is_anon)
+	    {
+	      struct type *last = otype;
+
+	      /* Find the last typedef for the type.  */
+	      while (TYPE_TARGET_TYPE (last) != NULL
+		     && (TYPE_CODE (TYPE_TARGET_TYPE (last))
+			 == TYPE_CODE_TYPEDEF))
+		last = TYPE_TARGET_TYPE (last);
+
+	      /* If there is only one typedef for this anonymous type,
+		 do not substitute it.  */
+	      if (type == otype)
+		return 0;
+	      else
+		/* Use the last typedef seen as the type for this
+		   anonymous type.  */
+		type = last;
+	    }
+
+	  buf = mem_fileopen ();
+	  TRY_CATCH (except, RETURN_MASK_ERROR)
+	  {
+	    type_print (type, "", buf, -1);
+	  }
+
+	  /* If type_print threw an exception, there is little point
+	     in continuing, so just bow out gracefully.  */
+	  if (except.reason < 0)
+	    {
+	      ui_file_delete (buf);
+	      return 0;
+	    }
+
+	  name = ui_file_obsavestring (buf, &info->obstack, &len);
+	  ui_file_delete (buf);
+
+	  /* Turn the result into a new tree.  Note that this
+	     tree will contain pointers into NAME, so NAME cannot
+	     be free'd until all typedef conversion is done and
+	     the final result is converted into a string.  */
+	  i = cp_demangled_name_to_comp (name, NULL);
+	  if (i != NULL)
+	    {
+	      /* Merge the two trees.  */
+	      cp_merge_demangle_parse_infos (info, ret_comp, i);
+
+	      /* Replace any newly introduced typedefs -- but not
+		 if the type is anonymous (that would lead to infinite
+		 looping).  */
+	      if (!is_anon)
+		replace_typedefs (info, ret_comp);
+	    }
+	  else
+	    {
+	      /* This shouldn't happen unless the type printer has
+		 output something that the name parser cannot grok.
+		 Nonetheless, an ounce of prevention...
+
+		 Canonicalize the name again, and store it in the
+		 current node (RET_COMP).  */
+	      char *canon = cp_canonicalize_string_no_typedefs (name);
+
+	      if (canon != NULL)
+		{
+		  /* Copy the canonicalization into the obstack and
+		     free CANON.  */
+		  name = copy_string_to_obstack (&info->obstack, canon, &len);
+		  xfree (canon);
+		}
+
+	      ret_comp->u.s_name.s = name;
+	      ret_comp->u.s_name.len = len;
+	    }
+
+	  return 1;
+	}
+    }
+
+  return 0;
+}
+
+/* Replace any typedefs appearing in the qualified name
+   (DEMANGLE_COMPONENT_QUAL_NAME) represented in RET_COMP for the name parse
+   given in INFO.  */
+
+static void
+replace_typedefs_qualified_name (struct demangle_parse_info *info,
+				 struct demangle_component *ret_comp)
+{
+  long len;
+  char *name;
+  struct ui_file *buf = mem_fileopen ();
+  struct demangle_component *comp = ret_comp;
+
+  /* Walk each node of the qualified name, reconstructing the name of
+     this element.  With every node, check for any typedef substitutions.
+     If a substitution has occurred, replace the qualified name node
+     with a DEMANGLE_COMPONENT_NAME node representing the new, typedef-
+     substituted name.  */
+  while (comp->type == DEMANGLE_COMPONENT_QUAL_NAME)
+    {
+      if (d_left (comp)->type == DEMANGLE_COMPONENT_NAME)
+	{
+	  struct demangle_component new;
+
+	  ui_file_write (buf, d_left (comp)->u.s_name.s,
+			 d_left (comp)->u.s_name.len);
+	  name = ui_file_obsavestring (buf, &info->obstack, &len);
+	  new.type = DEMANGLE_COMPONENT_NAME;
+	  new.u.s_name.s = name;
+	  new.u.s_name.len = len;
+	  if (inspect_type (info, &new))
+	    {
+	      char *n, *s;
+	      long slen;
+
+	      /* A typedef was substituted in NEW.  Convert it to a
+		 string and replace the top DEMANGLE_COMPONENT_QUAL_NAME
+		 node.  */
+
+	      ui_file_rewind (buf);
+	      n = cp_comp_to_string (&new, 100);
+	      if (n == NULL)
+		{
+		  /* If something went astray, abort typedef substitutions.  */
+		  ui_file_delete (buf);
+		  return;
+		}
+
+	      s = copy_string_to_obstack (&info->obstack, n, &slen);
+	      xfree (n);
+
+	      d_left (ret_comp)->type = DEMANGLE_COMPONENT_NAME;
+	      d_left (ret_comp)->u.s_name.s = s;
+	      d_left (ret_comp)->u.s_name.len = slen;
+	      d_right (ret_comp) = d_right (comp);
+	      comp = ret_comp;
+	      continue;
+	    }
+	}
+      else
+	{
+	  /* The current node is not a name, so simply replace any
+	     typedefs in it.  Then print it to the stream to continue
+	     checking for more typedefs in the tree.  */
+	  replace_typedefs (info, d_left (comp));
+	  name = cp_comp_to_string (d_left (comp), 100);
+	  if (name == NULL)
+	    {
+	      /* If something went astray, abort typedef substitutions.  */
+	      ui_file_delete (buf);
+	      return;
+	    }
+	  fputs_unfiltered (name, buf);
+	  xfree (name);
+	}
+      ui_file_write (buf, "::", 2);
+      comp = d_right (comp);
+    }
+
+  /* If the next component is DEMANGLE_COMPONENT_NAME, save the qualified
+     name assembled above and append the name given by COMP.  Then use this
+     reassembled name to check for a typedef.  */
+
+  if (comp->type == DEMANGLE_COMPONENT_NAME)
+    {
+      ui_file_write (buf, comp->u.s_name.s, comp->u.s_name.len);
+      name = ui_file_obsavestring (buf, &info->obstack, &len);
+
+      /* Replace the top (DEMANGLE_COMPONENT_QUAL_NAME) node
+	 with a DEMANGLE_COMPONENT_NAME node containing the whole
+	 name.  */
+      ret_comp->type = DEMANGLE_COMPONENT_NAME;
+      ret_comp->u.s_name.s = name;
+      ret_comp->u.s_name.len = len;
+      inspect_type (info, ret_comp);
+    }
+  else
+    replace_typedefs (info, comp);
+
+  ui_file_delete (buf);
+}
+
+
+/* A function to check const and volatile qualifiers for argument types.
+
+   "Parameter declarations that differ only in the presence
+   or absence of `const' and/or `volatile' are equivalent."
+   C++ Standard N3290, clause 13.1.3 #4.  */
+
+static void
+check_cv_qualifiers (struct demangle_component *ret_comp)
+{
+  while (d_left (ret_comp) != NULL
+	 && (d_left (ret_comp)->type == DEMANGLE_COMPONENT_CONST
+	     || d_left (ret_comp)->type == DEMANGLE_COMPONENT_VOLATILE))
+    {
+      d_left (ret_comp) = d_left (d_left (ret_comp));
+    }
+}
+
+/* Walk the parse tree given by RET_COMP, replacing any typedefs with
+   their basic types.  */
+
+static void
+replace_typedefs (struct demangle_parse_info *info,
+		  struct demangle_component *ret_comp)
+{
+  if (ret_comp)
+    {
+      switch (ret_comp->type)
+	{
+	case DEMANGLE_COMPONENT_ARGLIST:
+	  check_cv_qualifiers (ret_comp);
+	  /* Fall through */
+
+	case DEMANGLE_COMPONENT_FUNCTION_TYPE:
+	case DEMANGLE_COMPONENT_TEMPLATE:
+	case DEMANGLE_COMPONENT_TEMPLATE_ARGLIST:
+	case DEMANGLE_COMPONENT_TYPED_NAME:
+	  replace_typedefs (info, d_left (ret_comp));
+	  replace_typedefs (info, d_right (ret_comp));
+	  break;
+
+	case DEMANGLE_COMPONENT_NAME:
+	  inspect_type (info, ret_comp);
+	  break;
+
+	case DEMANGLE_COMPONENT_QUAL_NAME:
+	  replace_typedefs_qualified_name (info, ret_comp);
+	  break;
+
+	case DEMANGLE_COMPONENT_LOCAL_NAME:
+	case DEMANGLE_COMPONENT_CTOR:
+	case DEMANGLE_COMPONENT_ARRAY_TYPE:
+	case DEMANGLE_COMPONENT_PTRMEM_TYPE:
+	  replace_typedefs (info, d_right (ret_comp));
+	  break;
+
+	case DEMANGLE_COMPONENT_CONST:
+	case DEMANGLE_COMPONENT_RESTRICT:
+	case DEMANGLE_COMPONENT_VOLATILE:
+	case DEMANGLE_COMPONENT_VOLATILE_THIS:
+	case DEMANGLE_COMPONENT_CONST_THIS:
+	case DEMANGLE_COMPONENT_RESTRICT_THIS:
+	case DEMANGLE_COMPONENT_POINTER:
+	case DEMANGLE_COMPONENT_REFERENCE:
+	  replace_typedefs (info, d_left (ret_comp));
+	  break;
+
+	default:
+	  break;
+	}
+    }
+}
+
+/* Parse STRING and convert it to canonical form, resolving any typedefs.
+   If parsing fails, or if STRING is already canonical, return NULL.
+   Otherwise return the canonical form.  The return value is allocated via
+   xmalloc.  */
+
+char *
+cp_canonicalize_string_no_typedefs (const char *string)
+{
+  char *ret;
+  unsigned int estimated_len;
+  struct demangle_parse_info *info;
+
+  ret = NULL;
+  estimated_len = strlen (string) * 2;
+  info = cp_demangled_name_to_comp (string, NULL);
+  if (info != NULL)
+    {
+      /* Replace all the typedefs in the tree.  */
+      replace_typedefs (info, info->tree);
+
+      /* Convert the tree back into a string.  */
+      ret = cp_comp_to_string (info->tree, estimated_len);
+      gdb_assert (ret != NULL);
+
+      /* Free the parse information.  */
+      cp_demangled_name_parse_free (info);
+
+      /* Finally, compare the original string with the computed
+	 name, returning NULL if they are the same.  */
+      if (strcmp (string, ret) == 0)
+	{
+	  xfree (ret);
+	  return NULL;
+	}
+    }
+
+  return ret;
+}
+
 /* Parse STRING and convert it to canonical form.  If parsing fails,
    or if STRING is already canonical, return NULL.  Otherwise return
    the canonical form.  The return value is allocated via xmalloc.  */
@@ -123,19 +501,27 @@ cp_already_canonical (const char *string)
 char *
 cp_canonicalize_string (const char *string)
 {
-  struct demangle_component *ret_comp;
+  struct demangle_parse_info *info;
   unsigned int estimated_len;
   char *ret;
 
   if (cp_already_canonical (string))
     return NULL;
 
-  ret_comp = cp_demangled_name_to_comp (string, NULL);
-  if (ret_comp == NULL)
+  info = cp_demangled_name_to_comp (string, NULL);
+  if (info == NULL)
     return NULL;
 
   estimated_len = strlen (string) * 2;
-  ret = cp_comp_to_string (ret_comp, estimated_len);
+  ret = cp_comp_to_string (info->tree, estimated_len);
+  cp_demangled_name_parse_free (info);
+
+  if (ret == NULL)
+    {
+      warning (_("internal error: string \"%s\" failed to be canonicalized"),
+	       string);
+      return NULL;
+    }
 
   if (strcmp (string, ret) == 0)
     {
@@ -146,47 +532,54 @@ cp_canonicalize_string (const char *string)
   return ret;
 }
 
-/* Convert a mangled name to a demangle_component tree.  *MEMORY is set to the
-   block of used memory that should be freed when finished with the tree. 
-   DEMANGLED_P is set to the char * that should be freed when finished with
-   the tree, or NULL if none was needed.  OPTIONS will be passed to the
-   demangler.  */
+/* Convert a mangled name to a demangle_component tree.  *MEMORY is
+   set to the block of used memory that should be freed when finished
+   with the tree.  DEMANGLED_P is set to the char * that should be
+   freed when finished with the tree, or NULL if none was needed.
+   OPTIONS will be passed to the demangler.  */
 
-static struct demangle_component *
+static struct demangle_parse_info *
 mangled_name_to_comp (const char *mangled_name, int options,
 		      void **memory, char **demangled_p)
 {
-  struct demangle_component *ret;
   char *demangled_name;
+  struct demangle_parse_info *info;
 
   /* If it looks like a v3 mangled name, then try to go directly
      to trees.  */
   if (mangled_name[0] == '_' && mangled_name[1] == 'Z')
     {
-      ret = cplus_demangle_v3_components (mangled_name, options, memory);
+      struct demangle_component *ret;
+
+      ret = cplus_demangle_v3_components (mangled_name,
+					  options, memory);
       if (ret)
 	{
+	  info = cp_new_demangle_parse_info ();
+	  info->tree = ret;
 	  *demangled_p = NULL;
-	  return ret;
+	  return info;
 	}
     }
 
-  /* If it doesn't, or if that failed, then try to demangle the name.  */
+  /* If it doesn't, or if that failed, then try to demangle the
+     name.  */
   demangled_name = cplus_demangle (mangled_name, options);
   if (demangled_name == NULL)
    return NULL;
   
-  /* If we could demangle the name, parse it to build the component tree.  */
-  ret = cp_demangled_name_to_comp (demangled_name, NULL);
+  /* If we could demangle the name, parse it to build the component
+     tree.  */
+  info = cp_demangled_name_to_comp (demangled_name, NULL);
 
-  if (ret == NULL)
+  if (info == NULL)
     {
       xfree (demangled_name);
       return NULL;
     }
 
   *demangled_p = demangled_name;
-  return ret;
+  return info;
 }
 
 /* Return the name of the class containing method PHYSNAME.  */
@@ -197,16 +590,19 @@ cp_class_name_from_physname (const char *physname)
   void *storage = NULL;
   char *demangled_name = NULL, *ret;
   struct demangle_component *ret_comp, *prev_comp, *cur_comp;
+  struct demangle_parse_info *info;
   int done;
 
-  ret_comp = mangled_name_to_comp (physname, DMGL_ANSI, &storage,
-				   &demangled_name);
-  if (ret_comp == NULL)
+  info = mangled_name_to_comp (physname, DMGL_ANSI,
+			       &storage, &demangled_name);
+  if (info == NULL)
     return NULL;
 
   done = 0;
+  ret_comp = info->tree;
 
-  /* First strip off any qualifiers, if we have a function or method.  */
+  /* First strip off any qualifiers, if we have a function or
+     method.  */
   while (!done)
     switch (ret_comp->type)
       {
@@ -233,9 +629,9 @@ cp_class_name_from_physname (const char *physname)
   if (ret_comp->type == DEMANGLE_COMPONENT_TEMPLATE)
     ret_comp = d_left (ret_comp);
 
-  /* What we have now should be a name, possibly qualified.  Additional
-     qualifiers could live in the left subtree or the right subtree.  Find
-     the last piece.  */
+  /* What we have now should be a name, possibly qualified.
+     Additional qualifiers could live in the left subtree or the right
+     subtree.  Find the last piece.  */
   done = 0;
   prev_comp = NULL;
   cur_comp = ret_comp;
@@ -266,19 +662,21 @@ cp_class_name_from_physname (const char *physname)
     {
       /* We want to discard the rightmost child of PREV_COMP.  */
       *prev_comp = *d_left (prev_comp);
-      /* The ten is completely arbitrary; we don't have a good estimate.  */
+      /* The ten is completely arbitrary; we don't have a good
+	 estimate.  */
       ret = cp_comp_to_string (ret_comp, 10);
     }
 
   xfree (storage);
-  if (demangled_name)
-    xfree (demangled_name);
+  xfree (demangled_name);
+  cp_demangled_name_parse_free (info);
   return ret;
 }
 
-/* Return the child of COMP which is the basename of a method, variable,
-   et cetera.  All scope qualifiers are discarded, but template arguments
-   will be included.  The component tree may be modified.  */
+/* Return the child of COMP which is the basename of a method,
+   variable, et cetera.  All scope qualifiers are discarded, but
+   template arguments will be included.  The component tree may be
+   modified.  */
 
 static struct demangle_component *
 unqualified_name_from_comp (struct demangle_component *comp)
@@ -341,22 +739,24 @@ method_name_from_physname (const char *physname)
   void *storage = NULL;
   char *demangled_name = NULL, *ret;
   struct demangle_component *ret_comp;
+  struct demangle_parse_info *info;
 
-  ret_comp = mangled_name_to_comp (physname, DMGL_ANSI, &storage,
-				   &demangled_name);
-  if (ret_comp == NULL)
+  info = mangled_name_to_comp (physname, DMGL_ANSI,
+			       &storage, &demangled_name);
+  if (info == NULL)
     return NULL;
 
-  ret_comp = unqualified_name_from_comp (ret_comp);
+  ret_comp = unqualified_name_from_comp (info->tree);
 
   ret = NULL;
   if (ret_comp != NULL)
-    /* The ten is completely arbitrary; we don't have a good estimate.  */
+    /* The ten is completely arbitrary; we don't have a good
+       estimate.  */
     ret = cp_comp_to_string (ret_comp, 10);
 
   xfree (storage);
-  if (demangled_name)
-    xfree (demangled_name);
+  xfree (demangled_name);
+  cp_demangled_name_parse_free (info);
   return ret;
 }
 
@@ -371,17 +771,19 @@ cp_func_name (const char *full_name)
 {
   char *ret;
   struct demangle_component *ret_comp;
+  struct demangle_parse_info *info;
 
-  ret_comp = cp_demangled_name_to_comp (full_name, NULL);
-  if (!ret_comp)
+  info = cp_demangled_name_to_comp (full_name, NULL);
+  if (!info)
     return NULL;
 
-  ret_comp = unqualified_name_from_comp (ret_comp);
+  ret_comp = unqualified_name_from_comp (info->tree);
 
   ret = NULL;
   if (ret_comp != NULL)
     ret = cp_comp_to_string (ret_comp, 10);
 
+  cp_demangled_name_parse_free (info);
   return ret;
 }
 
@@ -394,16 +796,18 @@ cp_remove_params (const char *demangled_name)
 {
   int done = 0;
   struct demangle_component *ret_comp;
+  struct demangle_parse_info *info;
   char *ret = NULL;
 
   if (demangled_name == NULL)
     return NULL;
 
-  ret_comp = cp_demangled_name_to_comp (demangled_name, NULL);
-  if (ret_comp == NULL)
+  info = cp_demangled_name_to_comp (demangled_name, NULL);
+  if (info == NULL)
     return NULL;
 
   /* First strip off any qualifiers, if we have a function or method.  */
+  ret_comp = info->tree;
   while (!done)
     switch (ret_comp->type)
       {
@@ -425,6 +829,7 @@ cp_remove_params (const char *demangled_name)
   if (ret_comp->type == DEMANGLE_COMPONENT_TYPED_NAME)
     ret = cp_comp_to_string (d_left (ret_comp), 10);
 
+  cp_demangled_name_parse_free (info);
   return ret;
 }
 
@@ -551,7 +956,8 @@ cp_find_first_component_aux (const char *name, int permissive)
 	case 'o':
 	  /* Operator names can screw up the recursion.  */
 	  if (operator_possible
-	      && strncmp (name + index, "operator", LENGTH_OF_OPERATOR) == 0)
+	      && strncmp (name + index, "operator",
+			  LENGTH_OF_OPERATOR) == 0)
 	    {
 	      index += LENGTH_OF_OPERATOR;
 	      while (ISSPACE(name[index]))
@@ -641,20 +1047,22 @@ cp_entire_prefix_len (const char *name)
 
 /* Test to see if SYM is a symbol that we haven't seen corresponding
    to a function named OLOAD_NAME.  If so, add it to the current
-   completion list. */
+   completion list.  */
 
 static void
-overload_list_add_symbol (struct symbol *sym, const char *oload_name)
+overload_list_add_symbol (struct symbol *sym,
+			  const char *oload_name)
 {
   int newsize;
   int i;
   char *sym_name;
 
-  /* If there is no type information, we can't do anything, so skip */
+  /* If there is no type information, we can't do anything, so
+     skip.  */
   if (SYMBOL_TYPE (sym) == NULL)
     return;
 
-  /* skip any symbols that we've already considered. */
+  /* skip any symbols that we've already considered.  */
   for (i = 0; i < sym_return_val_index; ++i)
     if (strcmp (SYMBOL_LINKAGE_NAME (sym),
 		SYMBOL_LINKAGE_NAME (sym_return_val[i])) == 0)
@@ -674,12 +1082,13 @@ overload_list_add_symbol (struct symbol *sym, const char *oload_name)
 
   xfree (sym_name);
 
-  /* We have a match for an overload instance, so add SYM to the current list
-   * of overload instances */
+  /* We have a match for an overload instance, so add SYM to the
+     current list of overload instances */
   if (sym_return_val_index + 3 > sym_return_val_size)
     {
       newsize = (sym_return_val_size *= 2) * sizeof (struct symbol *);
-      sym_return_val = (struct symbol **) xrealloc ((char *) sym_return_val, newsize);
+      sym_return_val = (struct symbol **)
+	xrealloc ((char *) sym_return_val, newsize);
     }
   sym_return_val[sym_return_val_index++] = sym;
   sym_return_val[sym_return_val_index] = NULL;
@@ -731,14 +1140,12 @@ static void
 make_symbol_overload_list_block (const char *name,
                                  const struct block *block)
 {
-  struct dict_iterator iter;
+  struct block_iterator iter;
   struct symbol *sym;
 
-  const struct dictionary *dict = BLOCK_DICT (block);
-
-  for (sym = dict_iter_name_first (dict, name, &iter);
+  for (sym = block_iter_name_first (block, name, &iter);
        sym != NULL;
-       sym = dict_iter_name_next (name, &iter))
+       sym = block_iter_name_next (name, &iter))
     overload_list_add_symbol (sym, name);
 }
 
@@ -766,26 +1173,29 @@ make_symbol_overload_list_namespace (const char *func_name,
 
   /* Look in the static block.  */
   block = block_static_block (get_selected_block (0));
-  make_symbol_overload_list_block (name, block);
+  if (block)
+    make_symbol_overload_list_block (name, block);
 
   /* Look in the global block.  */
   block = block_global_block (block);
-  make_symbol_overload_list_block (name, block);
+  if (block)
+    make_symbol_overload_list_block (name, block);
 
 }
 
-/* Search the namespace of the given type and namespace of and public base
- types.  */
+/* Search the namespace of the given type and namespace of and public
+   base types.  */
 
 static void
 make_symbol_overload_list_adl_namespace (struct type *type,
                                          const char *func_name)
 {
   char *namespace;
-  char *type_name;
+  const char *type_name;
   int i, prefix_len;
 
-  while (TYPE_CODE (type) == TYPE_CODE_PTR || TYPE_CODE (type) == TYPE_CODE_REF
+  while (TYPE_CODE (type) == TYPE_CODE_PTR
+	 || TYPE_CODE (type) == TYPE_CODE_REF
          || TYPE_CODE (type) == TYPE_CODE_ARRAY
          || TYPE_CODE (type) == TYPE_CODE_TYPEDEF)
     {
@@ -816,13 +1226,14 @@ make_symbol_overload_list_adl_namespace (struct type *type,
     for (i = 0; i < TYPE_N_BASECLASSES (type); i++)
       {
 	if (BASETYPE_VIA_PUBLIC (type, i))
-	  make_symbol_overload_list_adl_namespace (TYPE_BASECLASS (type, i),
+	  make_symbol_overload_list_adl_namespace (TYPE_BASECLASS (type,
+								   i),
 						   func_name);
       }
 }
 
-/* Adds the the overload list overload candidates for FUNC_NAME found through
-   argument dependent lookup.  */
+/* Adds the overload list overload candidates for FUNC_NAME found
+   through argument dependent lookup.  */
 
 struct symbol **
 make_symbol_overload_list_adl (struct type **arg_types, int nargs,
@@ -833,12 +1244,14 @@ make_symbol_overload_list_adl (struct type **arg_types, int nargs,
   gdb_assert (sym_return_val_size != -1);
 
   for (i = 1; i <= nargs; i++)
-    make_symbol_overload_list_adl_namespace (arg_types[i - 1], func_name);
+    make_symbol_overload_list_adl_namespace (arg_types[i - 1],
+					     func_name);
 
   return sym_return_val;
 }
 
-/* Used for cleanups to reset the "searched" flag in case of an error.  */
+/* Used for cleanups to reset the "searched" flag in case of an
+   error.  */
 
 static void
 reset_directive_searched (void *data)
@@ -874,19 +1287,22 @@ make_symbol_overload_list_using (const char *func_name,
 	if (current->searched)
 	  continue;
 
-        /* If this is a namespace alias or imported declaration ignore it.  */
+        /* If this is a namespace alias or imported declaration ignore
+	   it.  */
         if (current->alias != NULL || current->declaration != NULL)
           continue;
 
         if (strcmp (namespace, current->import_dest) == 0)
 	  {
-	    /* Mark this import as searched so that the recursive call does
-	       not search it again.  */
+	    /* Mark this import as searched so that the recursive call
+	       does not search it again.  */
 	    struct cleanup *old_chain;
 	    current->searched = 1;
-	    old_chain = make_cleanup (reset_directive_searched, current);
+	    old_chain = make_cleanup (reset_directive_searched,
+				      current);
 
-	    make_symbol_overload_list_using (func_name, current->import_src);
+	    make_symbol_overload_list_using (func_name,
+					     current->import_src);
 
 	    current->searched = 0;
 	    discard_cleanups (old_chain);
@@ -904,15 +1320,12 @@ make_symbol_overload_list_using (const char *func_name,
 static void
 make_symbol_overload_list_qualified (const char *func_name)
 {
-  struct symbol *sym;
   struct symtab *s;
   struct objfile *objfile;
   const struct block *b, *surrounding_static_block = 0;
-  struct dict_iterator iter;
-  const struct dictionary *dict;
 
-  /* Look through the partial symtabs for all symbols which begin
-     by matching FUNC_NAME.  Make sure we read that symbol table in. */
+  /* Look through the partial symtabs for all symbols which begin by
+     matching FUNC_NAME.  Make sure we read that symbol table in.  */
 
   ALL_OBJFILES (objfile)
   {
@@ -949,7 +1362,7 @@ make_symbol_overload_list_qualified (const char *func_name)
   }
 }
 
-/* Lookup the rtti type for a class name. */
+/* Lookup the rtti type for a class name.  */
 
 struct type *
 cp_lookup_rtti_type (const char *name, struct block *block)
@@ -997,8 +1410,11 @@ cp_lookup_rtti_type (const char *name, struct block *block)
 static  void
 maint_cplus_command (char *arg, int from_tty)
 {
-  printf_unfiltered (_("\"maintenance cplus\" must be followed by the name of a command.\n"));
-  help_list (maint_cplus_cmd_list, "maintenance cplus ", -1, gdb_stdout);
+  printf_unfiltered (_("\"maintenance cplus\" must be followed "
+		       "by the name of a command.\n"));
+  help_list (maint_cplus_cmd_list,
+	     "maintenance cplus ",
+	     -1, gdb_stdout);
 }
 
 /* This is a front end for cp_find_first_component, for unit testing.
@@ -1025,117 +1441,40 @@ first_component_command (char *arg, int from_tty)
 
 extern initialize_file_ftype _initialize_cp_support; /* -Wmissing-prototypes */
 
-#define SKIP_SPACE(P)				\
-  do						\
-  {						\
-    while (*(P) == ' ' || *(P) == '\t')		\
-      ++(P);					\
-  }						\
-  while (0)
 
-/* Returns the length of the operator name or 0 if INPUT does not
-   point to a valid C++ operator.  INPUT should start with "operator".  */
-int
-cp_validate_operator (const char *input)
+/* Implement "info vtbl".  */
+
+static void
+info_vtbl_command (char *arg, int from_tty)
 {
-  int i;
-  char *copy;
-  const char *p;
-  struct expression *expr;
-  struct value *val;
-  struct gdb_exception except;
+  struct value *value;
 
-  p = input;
-
-  if (strncmp (p, "operator", 8) == 0)
-    {
-      int valid = 0;
-
-      p += 8;
-      SKIP_SPACE (p);
-      for (i = 0; i < sizeof (operator_tokens) / sizeof (operator_tokens[0]);
-	   ++i)
-	{
-	  int length = strlen (operator_tokens[i]);
-
-	  /* By using strncmp here, we MUST have operator_tokens ordered!
-	     See additional notes where operator_tokens is defined above.  */
-	  if (strncmp (p, operator_tokens[i], length) == 0)
-	    {
-	      const char *op = p;
-
-	      valid = 1;
-	      p += length;
-
-	      if (strncmp (op, "new", 3) == 0
-		  || strncmp (op, "delete", 6) == 0)
-		{
-
-		  /* Special case: new[] and delete[].  We must be careful
-		     to swallow whitespace before/in "[]".  */
-		  SKIP_SPACE (p);
-
-		  if (*p == '[')
-		    {
-		      ++p;
-		      SKIP_SPACE (p);
-		      if (*p == ']')
-			++p;
-		      else
-			valid = 0;
-		    }
-		}
-
-	      if (valid)
-		return (p - input);
-	    }
-	}
-
-      /* Check input for a conversion operator.  */
-
-      /* Skip past base typename */
-      while (*p != '*' && *p != '&' && *p != 0 && *p != ' ')
-	++p;
-      SKIP_SPACE (p);
-
-      /* Add modifiers '*'/'&' */
-      while (*p == '*' || *p == '&')
-	{
-	  ++p;
-	  SKIP_SPACE (p);
-	}
-
-      /* Check for valid type.  [Remember: input starts with 
-	 "operator".]  */
-      copy = savestring (input + 8, p - input - 8);
-      expr = NULL;
-      val = NULL;
-      TRY_CATCH (except, RETURN_MASK_ALL)
-	{
-	  expr = parse_expression (copy);
-	  val = evaluate_type (expr);
-	}
-
-      xfree (copy);
-      if (expr)
-	xfree (expr);
-
-      if (val != NULL && value_type (val) != NULL)
-	return (p - input);
-    }
-
-  return 0;
+  value = parse_and_eval (arg);
+  cplus_print_vtable (value);
 }
 
 void
 _initialize_cp_support (void)
 {
-  add_prefix_cmd ("cplus", class_maintenance, maint_cplus_command,
-		  _("C++ maintenance commands."), &maint_cplus_cmd_list,
-		  "maintenance cplus ", 0, &maintenancelist);
-  add_alias_cmd ("cp", "cplus", class_maintenance, 1, &maintenancelist);
+  add_prefix_cmd ("cplus", class_maintenance,
+		  maint_cplus_command,
+		  _("C++ maintenance commands."),
+		  &maint_cplus_cmd_list,
+		  "maintenance cplus ",
+		  0, &maintenancelist);
+  add_alias_cmd ("cp", "cplus",
+		 class_maintenance, 1,
+		 &maintenancelist);
 
-  add_cmd ("first_component", class_maintenance, first_component_command,
+  add_cmd ("first_component",
+	   class_maintenance,
+	   first_component_command,
 	   _("Print the first class/namespace component of NAME."),
 	   &maint_cplus_cmd_list);
+
+  add_info ("vtbl", info_vtbl_command,
+	    _("Show the virtual function table for a C++ object.\n\
+Usage: info vtbl EXPRESSION\n\
+Evaluate EXPRESSION and display the virtual function table for the\n\
+resulting object."));
 }

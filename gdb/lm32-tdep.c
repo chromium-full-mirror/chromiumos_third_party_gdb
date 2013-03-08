@@ -1,7 +1,7 @@
 /* Target-dependent code for Lattice Mico32 processor, for GDB.
    Contributed by Jon Beniston <jon@beniston.com>
 
-   Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -48,7 +48,7 @@
 
 struct gdbarch_tdep
 {
-  /* gdbarch target dependent data here. Currently unused for LM32.  */
+  /* gdbarch target dependent data here.  Currently unused for LM32.  */
 };
 
 struct lm32_frame_cache
@@ -144,7 +144,7 @@ lm32_analyze_prologue (struct gdbarch *gdbarch,
       if ((LM32_OPCODE (instruction) == OP_SW)
 	  && (LM32_REG0 (instruction) == SIM_LM32_SP_REGNUM))
 	{
-	  /* Any stack displaced store is likely part of the prologue.  
+	  /* Any stack displaced store is likely part of the prologue.
 	     Record that the register is being saved, and the offset 
 	     into the stack.  */
 	  info->saved_regs[LM32_REG1 (instruction)].addr =
@@ -153,7 +153,7 @@ lm32_analyze_prologue (struct gdbarch *gdbarch,
       else if ((LM32_OPCODE (instruction) == OP_ADDI)
 	       && (LM32_REG1 (instruction) == SIM_LM32_SP_REGNUM))
 	{
-	  /* An add to the SP is likely to be part of the prologue.  
+	  /* An add to the SP is likely to be part of the prologue.
 	     Adjust stack size by whatever the instruction adds to the sp.  */
 	  info->size -= LM32_IMM16 (instruction);
 	}
@@ -172,7 +172,8 @@ lm32_analyze_prologue (struct gdbarch *gdbarch,
 	}
       else
 	{
-	  /* Any other instruction is likely not to be part of the prologue.  */
+	  /* Any other instruction is likely not to be part of the
+	     prologue.  */
 	  break;
 	}
     }
@@ -187,7 +188,6 @@ static CORE_ADDR
 lm32_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR pc)
 {
   CORE_ADDR func_addr, limit_pc;
-  struct symtab_and_line sal;
   struct lm32_frame_cache frame_info;
   struct trad_frame_saved_reg saved_regs[SIM_LM32_NUM_REGS];
 
@@ -262,8 +262,6 @@ lm32_push_dummy_call (struct gdbarch *gdbarch, struct value *function,
       struct type *arg_type = check_typedef (value_type (arg));
       gdb_byte *contents;
       int len;
-      int j;
-      int reg;
       ULONGEST val;
 
       /* Promote small integer types to int.  */
@@ -314,7 +312,6 @@ lm32_extract_return_value (struct type *type, struct regcache *regcache,
 {
   struct gdbarch *gdbarch = get_regcache_arch (regcache);
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
-  int offset;
   ULONGEST l;
   CORE_ADDR return_buffer;
 
@@ -336,8 +333,8 @@ lm32_extract_return_value (struct type *type, struct regcache *regcache,
     }
   else
     {
-      /* Aggregate types greater than a single register are returned in memory. 
-         FIXME: Unless they are only 2 regs?.  */
+      /* Aggregate types greater than a single register are returned
+         in memory.  FIXME: Unless they are only 2 regs?.  */
       regcache_cooked_read_unsigned (regcache, SIM_LM32_R1_REGNUM, &l);
       return_buffer = l;
       read_memory (return_buffer, valbuf, TYPE_LENGTH (type));
@@ -373,7 +370,7 @@ lm32_store_return_value (struct type *type, struct regcache *regcache,
 
 /* Determine whether a functions return value is in a register or memory.  */
 static enum return_value_convention
-lm32_return_value (struct gdbarch *gdbarch, struct type *func_type,
+lm32_return_value (struct gdbarch *gdbarch, struct value *function,
 		   struct type *valtype, struct regcache *regcache,
 		   gdb_byte *readbuf, const gdb_byte *writebuf)
 {
@@ -421,17 +418,11 @@ lm32_dummy_id (struct gdbarch *gdbarch, struct frame_info *this_frame)
 static struct lm32_frame_cache *
 lm32_frame_cache (struct frame_info *this_frame, void **this_prologue_cache)
 {
-  CORE_ADDR prologue_pc;
   CORE_ADDR current_pc;
   ULONGEST prev_sp;
   ULONGEST this_base;
   struct lm32_frame_cache *info;
-  int prefixed;
-  unsigned long instruction;
-  int op;
-  int offsets[32];
   int i;
-  long immediate;
 
   if ((*this_prologue_cache))
     return (*this_prologue_cache);
@@ -463,7 +454,8 @@ lm32_frame_cache (struct frame_info *this_frame, void **this_prologue_cache)
      converted into a request for the RA register.  */
   info->saved_regs[SIM_LM32_PC_REGNUM] = info->saved_regs[SIM_LM32_RA_REGNUM];
 
-  /* The previous frame's SP needed to be computed.  Save the computed value. */
+  /* The previous frame's SP needed to be computed.  Save the computed
+     value.  */
   trad_frame_set_value (info->saved_regs, SIM_LM32_SP_REGNUM, prev_sp);
 
   return info;
@@ -494,6 +486,7 @@ lm32_frame_prev_register (struct frame_info *this_frame,
 
 static const struct frame_unwind lm32_frame_unwind = {
   NORMAL_FRAME,
+  default_frame_unwind_stop_reason,
   lm32_frame_this_id,
   lm32_frame_prev_register,
   NULL,
@@ -586,6 +579,9 @@ lm32_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   return gdbarch;
 }
+
+/* -Wmissing-prototypes */
+extern initialize_file_ftype _initialize_lm32_tdep;
 
 void
 _initialize_lm32_tdep (void)

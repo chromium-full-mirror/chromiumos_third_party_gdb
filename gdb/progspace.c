@@ -1,6 +1,6 @@
 /* Program and address space management, for GDB, the GNU debugger.
 
-   Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+   Copyright (C) 2009-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -149,6 +149,7 @@ release_program_space (struct program_space *pspace)
     free_address_space (pspace->aspace);
   resize_section_table (&pspace->target_sections,
 			-resize_section_table (&pspace->target_sections, 0));
+  clear_program_space_solib_cache (pspace);
     /* Discard any data modules have associated with the PSPACE.  */
   program_space_free_data (pspace);
   xfree (pspace);
@@ -397,7 +398,7 @@ maintenance_info_program_spaces_command (char *args, int from_tty)
 	error (_("program space ID %d not known."), requested);
     }
 
-  print_program_space (uiout, requested);
+  print_program_space (current_uiout, requested);
 }
 
 /* Simply returns the count of program spaces.  */
@@ -503,6 +504,19 @@ switch_to_program_space_and_thread (struct program_space *pspace)
 
 
 
+/* See progspace.h.  */
+
+void
+clear_program_space_solib_cache (struct program_space *pspace)
+{
+  VEC_free (so_list_ptr, pspace->added_solibs);
+
+  free_char_ptr_vec (pspace->deleted_solibs);
+  pspace->deleted_solibs = NULL;
+}
+
+
+
 /* Keep a registry of per-program_space data-pointers required by other GDB
    modules.  */
 
@@ -596,7 +610,8 @@ set_program_space_data (struct program_space *pspace,
 }
 
 void *
-program_space_data (struct program_space *pspace, const struct program_space_data *data)
+program_space_data (struct program_space *pspace,
+		    const struct program_space_data *data)
 {
   gdb_assert (data->index < pspace->num_data);
   return pspace->data[data->index];
@@ -608,8 +623,8 @@ void
 initialize_progspace (void)
 {
   add_cmd ("program-spaces", class_maintenance,
-	   maintenance_info_program_spaces_command, _("\
-Info about currently known program spaces."),
+	   maintenance_info_program_spaces_command,
+	   _("Info about currently known program spaces."),
 	   &maintenanceinfolist);
 
   /* There's always one program space.  Note that this function isn't

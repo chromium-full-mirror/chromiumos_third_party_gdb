@@ -1,8 +1,6 @@
 /* Symbol table lookup for the GNU debugger, GDB.
 
-   Copyright (C) 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995,
-   1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2007, 2008, 2009,
-   2010 Free Software Foundation, Inc.
+   Copyright (C) 1986-2004, 2007-2012 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -35,12 +33,12 @@
 #include "language.h"
 #include "demangle.h"
 #include "inferior.h"
-#include "linespec.h"
 #include "source.h"
 #include "filenames.h"		/* for FILENAME_CMP */
 #include "objc-lang.h"
 #include "d-lang.h"
 #include "ada-lang.h"
+#include "go-lang.h"
 #include "p-lang.h"
 #include "addrmap.h"
 
@@ -67,8 +65,6 @@
 
 /* Prototypes for local functions */
 
-static void completion_list_add_name (char *, char *, int, char *, char *);
-
 static void rbreak_command (char *, int);
 
 static void types_info (char *, int);
@@ -79,13 +75,7 @@ static void variables_info (char *, int);
 
 static void sources_info (char *, int);
 
-static void output_source_filename (const char *, int *);
-
-static int find_line_common (struct linetable *, int, int *);
-
-/* This one is used by linespec.c */
-
-char *operator_chars (char *p, char **end);
+static int find_line_common (struct linetable *, int, int *, int);
 
 static struct symbol *lookup_symbol_aux (const char *name,
 					 const struct block *block,
@@ -110,16 +100,19 @@ struct symbol *lookup_symbol_aux_quick (struct objfile *objfile,
 					const char *name,
 					const domain_enum domain);
 
-static void print_symbol_info (domain_enum,
-			       struct symtab *, struct symbol *, int, char *);
-
 static void print_msymbol_info (struct minimal_symbol *);
-
-static void symtab_symbol_info (char *, domain_enum, int);
 
 void _initialize_symtab (void);
 
 /* */
+
+/* When non-zero, print debugging messages related to symtab creation.  */
+int symtab_create_debug = 0;
+
+/* Non-zero if a file may be known by two different basenames.
+   This is the uncommon case, and significantly slows down gdb.
+   Default set to "off" to not slow down the common case.  */
+int basenames_may_differ = 0;
 
 /* Allow the user to configure the debugger behavior with respect
    to multiple-choice menus when more than one symbol matches during
@@ -128,7 +121,7 @@ void _initialize_symtab (void);
 const char multiple_symbols_ask[] = "ask";
 const char multiple_symbols_all[] = "all";
 const char multiple_symbols_cancel[] = "cancel";
-static const char *multiple_symbols_modes[] =
+static const char *const multiple_symbols_modes[] =
 {
   multiple_symbols_ask,
   multiple_symbols_all,
@@ -147,43 +140,84 @@ multiple_symbols_select_mode (void)
 
 /* Block in which the most recently searched-for symbol was found.
    Might be better to make this a parameter to lookup_symbol and
-   value_of_this. */
+   value_of_this.  */
 
 const struct block *block_found;
 
-/* Check for a symtab of a specific name; first in symtabs, then in
-   psymtabs.  *If* there is no '/' in the name, a match after a '/'
-   in the symtab filename will also work.  */
+/* See whether FILENAME matches SEARCH_NAME using the rule that we
+   advertise to the user.  (The manual's description of linespecs
+   describes what we advertise).  SEARCH_LEN is the length of
+   SEARCH_NAME.  We assume that SEARCH_NAME is a relative path.
+   Returns true if they match, false otherwise.  */
 
-struct symtab *
-lookup_symtab (const char *name)
+int
+compare_filenames_for_search (const char *filename, const char *search_name,
+			      int search_len)
 {
-  int found;
+  int len = strlen (filename);
+
+  if (len < search_len)
+    return 0;
+
+  /* The tail of FILENAME must match.  */
+  if (FILENAME_CMP (filename + len - search_len, search_name) != 0)
+    return 0;
+
+  /* Either the names must completely match, or the character
+     preceding the trailing SEARCH_NAME segment of FILENAME must be a
+     directory separator.  */
+  return (len == search_len
+	  || IS_DIR_SEPARATOR (filename[len - search_len - 1])
+	  || (HAS_DRIVE_SPEC (filename)
+	      && STRIP_DRIVE_SPEC (filename) == &filename[len - search_len]));
+}
+
+/* Check for a symtab of a specific name by searching some symtabs.
+   This is a helper function for callbacks of iterate_over_symtabs.
+
+   The return value, NAME, FULL_PATH, REAL_PATH, CALLBACK, and DATA
+   are identical to the `map_symtabs_matching_filename' method of
+   quick_symbol_functions.
+
+   FIRST and AFTER_LAST indicate the range of symtabs to search.
+   AFTER_LAST is one past the last symtab to search; NULL means to
+   search until the end of the list.  */
+
+int
+iterate_over_some_symtabs (const char *name,
+			   const char *full_path,
+			   const char *real_path,
+			   int (*callback) (struct symtab *symtab,
+					    void *data),
+			   void *data,
+			   struct symtab *first,
+			   struct symtab *after_last)
+{
   struct symtab *s = NULL;
-  struct objfile *objfile;
-  char *real_path = NULL;
-  char *full_path = NULL;
+  const char* base_name = lbasename (name);
+  int name_len = strlen (name);
+  int is_abs = IS_ABSOLUTE_PATH (name);
 
-  /* Here we are interested in canonicalizing an absolute path, not
-     absolutizing a relative path.  */
-  if (IS_ABSOLUTE_PATH (name))
+  for (s = first; s != NULL && s != after_last; s = s->next)
     {
-      full_path = xfullpath (name);
-      make_cleanup (xfree, full_path);
-      real_path = gdb_realpath (name);
-      make_cleanup (xfree, real_path);
-    }
+      /* Exact match is always ok.  */
+      if (FILENAME_CMP (name, s->filename) == 0)
+	{
+	  if (callback (s, data))
+	    return 1;
+	}
 
-got_symtab:
+      if (!is_abs && compare_filenames_for_search (s->filename, name, name_len))
+	{
+	  if (callback (s, data))
+	    return 1;
+	}
 
-  /* First, search for an exact match */
-
-  ALL_SYMTABS (objfile, s)
-  {
-    if (FILENAME_CMP (name, s->filename) == 0)
-      {
-	return s;
-      }
+    /* Before we invoke realpath, which can get expensive when many
+       files are involved, do a quick comparison of the basenames.  */
+    if (! basenames_may_differ
+	&& FILENAME_CMP (base_name, lbasename (s->filename)) != 0)
+      continue;
 
     /* If the user gave us an absolute path, try to find the file in
        this symtab and use its absolute path.  */
@@ -194,8 +228,16 @@ got_symtab:
 
         if (fp != NULL && FILENAME_CMP (full_path, fp) == 0)
           {
-            return s;
+	    if (callback (s, data))
+	      return 1;
           }
+
+	if (fp != NULL && !is_abs && compare_filenames_for_search (fp, name,
+								   name_len))
+	  {
+	    if (callback (s, data))
+	      return 1;
+	  }
       }
 
     if (real_path != NULL)
@@ -208,57 +250,111 @@ got_symtab:
 
             make_cleanup (xfree, rp);
             if (FILENAME_CMP (real_path, rp) == 0)
-              {
-                return s;
-              }
+	      {
+		if (callback (s, data))
+		  return 1;
+	      }
+
+	    if (!is_abs && compare_filenames_for_search (rp, name, name_len))
+	      {
+		if (callback (s, data))
+		  return 1;
+	      }
           }
       }
-  }
-
-  /* Now, search for a matching tail (only if name doesn't have any dirs) */
-
-  if (lbasename (name) == name)
-    ALL_SYMTABS (objfile, s)
-    {
-      if (FILENAME_CMP (lbasename (s->filename), name) == 0)
-	return s;
     }
+
+  return 0;
+}
+
+/* Check for a symtab of a specific name; first in symtabs, then in
+   psymtabs.  *If* there is no '/' in the name, a match after a '/'
+   in the symtab filename will also work.
+
+   Calls CALLBACK with each symtab that is found and with the supplied
+   DATA.  If CALLBACK returns true, the search stops.  */
+
+void
+iterate_over_symtabs (const char *name,
+		      int (*callback) (struct symtab *symtab,
+				       void *data),
+		      void *data)
+{
+  struct symtab *s = NULL;
+  struct objfile *objfile;
+  char *real_path = NULL;
+  char *full_path = NULL;
+  struct cleanup *cleanups = make_cleanup (null_cleanup, NULL);
+
+  /* Here we are interested in canonicalizing an absolute path, not
+     absolutizing a relative path.  */
+  if (IS_ABSOLUTE_PATH (name))
+    {
+      full_path = xfullpath (name);
+      make_cleanup (xfree, full_path);
+      real_path = gdb_realpath (name);
+      make_cleanup (xfree, real_path);
+    }
+
+  ALL_OBJFILES (objfile)
+  {
+    if (iterate_over_some_symtabs (name, full_path, real_path, callback, data,
+				   objfile->symtabs, NULL))
+      {
+	do_cleanups (cleanups);
+	return;
+      }
+  }
 
   /* Same search rules as above apply here, but now we look thru the
      psymtabs.  */
 
-  found = 0;
   ALL_OBJFILES (objfile)
   {
     if (objfile->sf
-	&& objfile->sf->qf->lookup_symtab (objfile, name, full_path, real_path,
-					   &s))
+	&& objfile->sf->qf->map_symtabs_matching_filename (objfile,
+							   name,
+							   full_path,
+							   real_path,
+							   callback,
+							   data))
       {
-	found = 1;
-	break;
+	do_cleanups (cleanups);
+	return;
       }
   }
 
-  if (s != NULL)
-    return s;
-  if (!found)
-    return NULL;
-
-  /* At this point, we have located the psymtab for this file, but
-     the conversion to a symtab has failed.  This usually happens
-     when we are looking up an include file.  In this case,
-     PSYMTAB_TO_SYMTAB doesn't return a symtab, even though one has
-     been created.  So, we need to run through the symtabs again in
-     order to find the file.
-     XXX - This is a crock, and should be fixed inside of the the
-     symbol parsing routines. */
-  goto got_symtab;
+  do_cleanups (cleanups);
 }
+
+/* The callback function used by lookup_symtab.  */
+
+static int
+lookup_symtab_callback (struct symtab *symtab, void *data)
+{
+  struct symtab **result_ptr = data;
+
+  *result_ptr = symtab;
+  return 1;
+}
+
+/* A wrapper for iterate_over_symtabs that returns the first matching
+   symtab, or NULL.  */
+
+struct symtab *
+lookup_symtab (const char *name)
+{
+  struct symtab *result = NULL;
+
+  iterate_over_symtabs (name, lookup_symtab_callback, &result);
+  return result;
+}
+
 
 /* Mangle a GDB method stub type.  This actually reassembles the pieces of the
    full method name, which consist of the class name (from T), the unadorned
    method name from METHOD_ID, and the signature for the specific overload,
-   specified by SIGNATURE_ID.  Note that this function is g++ specific. */
+   specified by SIGNATURE_ID.  Note that this function is g++ specific.  */
 
 char *
 gdb_mangle_name (struct type *type, int method_id, int signature_id)
@@ -267,9 +363,9 @@ gdb_mangle_name (struct type *type, int method_id, int signature_id)
   char *mangled_name;
   struct fn_field *f = TYPE_FN_FIELDLIST1 (type, method_id);
   struct fn_field *method = &f[signature_id];
-  char *field_name = TYPE_FN_FIELDLIST_NAME (type, method_id);
-  char *physname = TYPE_FN_FIELD_PHYSNAME (f, signature_id);
-  char *newname = type_name_no_tag (type);
+  const char *field_name = TYPE_FN_FIELDLIST_NAME (type, method_id);
+  const char *physname = TYPE_FN_FIELD_PHYSNAME (f, signature_id);
+  const char *newname = type_name_no_tag (type);
 
   /* Does the form of physname indicate that it is the full mangled name
      of a constructor (not just the args)?  */
@@ -291,8 +387,8 @@ gdb_mangle_name (struct type *type, int method_id, int signature_id)
 
   is_full_physname_constructor = is_constructor_name (physname);
 
-  is_constructor =
-    is_full_physname_constructor || (newname && strcmp (field_name, newname) == 0);
+  is_constructor = is_full_physname_constructor 
+    || (newname && strcmp (field_name, newname) == 0);
 
   if (!is_destructor)
     is_destructor = (strncmp (physname, "__dt", 4) == 0);
@@ -332,7 +428,7 @@ gdb_mangle_name (struct type *type, int method_id, int signature_id)
   strcat (mangled_name, buf);
   /* If the class doesn't have a name, i.e. newname NULL, then we just
      mangle it using 0 for the length of the class.  Thus it gets mangled
-     as something starting with `::' rather than `classname::'. */
+     as something starting with `::' rather than `classname::'.  */
   if (newname != NULL)
     strcat (mangled_name, newname);
 
@@ -340,22 +436,78 @@ gdb_mangle_name (struct type *type, int method_id, int signature_id)
   return (mangled_name);
 }
 
+/* Initialize the cplus_specific structure.  'cplus_specific' should
+   only be allocated for use with cplus symbols.  */
+
+static void
+symbol_init_cplus_specific (struct general_symbol_info *gsymbol,
+                           struct objfile *objfile)
+{
+  /* A language_specific structure should not have been previously
+     initialized.  */
+  gdb_assert (gsymbol->language_specific.cplus_specific == NULL);
+  gdb_assert (objfile != NULL);
+
+  gsymbol->language_specific.cplus_specific =
+      OBSTACK_ZALLOC (&objfile->objfile_obstack, struct cplus_specific);
+}
+
+/* Set the demangled name of GSYMBOL to NAME.  NAME must be already
+   correctly allocated.  For C++ symbols a cplus_specific struct is
+   allocated so OBJFILE must not be NULL.  If this is a non C++ symbol
+   OBJFILE can be NULL.  */
+
+void
+symbol_set_demangled_name (struct general_symbol_info *gsymbol,
+                           char *name,
+                           struct objfile *objfile)
+{
+  if (gsymbol->language == language_cplus)
+    {
+      if (gsymbol->language_specific.cplus_specific == NULL)
+	symbol_init_cplus_specific (gsymbol, objfile);
+
+      gsymbol->language_specific.cplus_specific->demangled_name = name;
+    }
+  else
+    gsymbol->language_specific.mangled_lang.demangled_name = name;
+}
+
+/* Return the demangled name of GSYMBOL.  */
+
+const char *
+symbol_get_demangled_name (const struct general_symbol_info *gsymbol)
+{
+  if (gsymbol->language == language_cplus)
+    {
+      if (gsymbol->language_specific.cplus_specific != NULL)
+	return gsymbol->language_specific.cplus_specific->demangled_name;
+      else
+	return NULL;
+    }
+  else
+    return gsymbol->language_specific.mangled_lang.demangled_name;
+}
+
 
 /* Initialize the language dependent portion of a symbol
-   depending upon the language for the symbol. */
+   depending upon the language for the symbol.  */
+
 void
-symbol_init_language_specific (struct general_symbol_info *gsymbol,
-			       enum language language)
+symbol_set_language (struct general_symbol_info *gsymbol,
+                     enum language language)
 {
   gsymbol->language = language;
-  if (gsymbol->language == language_cplus
-      || gsymbol->language == language_d
+  if (gsymbol->language == language_d
+      || gsymbol->language == language_go
       || gsymbol->language == language_java
       || gsymbol->language == language_objc
       || gsymbol->language == language_fortran)
     {
-      gsymbol->language_specific.cplus_specific.demangled_name = NULL;
+      symbol_set_demangled_name (gsymbol, NULL, NULL);
     }
+  else if (gsymbol->language == language_cplus)
+    gsymbol->language_specific.cplus_specific = NULL;
   else
     {
       memset (&gsymbol->language_specific, 0,
@@ -373,6 +525,7 @@ struct demangled_name_entry
 };
 
 /* Hash function for the demangled name hash.  */
+
 static hashval_t
 hash_demangled_name_entry (const void *data)
 {
@@ -382,6 +535,7 @@ hash_demangled_name_entry (const void *data)
 }
 
 /* Equality function for the demangled name hash.  */
+
 static int
 eq_demangled_name_entry (const void *a, const void *b)
 {
@@ -438,7 +592,7 @@ symbol_find_demangled_name (struct general_symbol_info *gsymbol,
       || gsymbol->language == language_auto)
     {
       demangled =
-        cplus_demangle (mangled, DMGL_PARAMS | DMGL_ANSI | DMGL_VERBOSE);
+        cplus_demangle (mangled, DMGL_PARAMS | DMGL_ANSI);
       if (demangled != NULL)
 	{
 	  gsymbol->language = language_cplus;
@@ -466,6 +620,22 @@ symbol_find_demangled_name (struct general_symbol_info *gsymbol,
 	  return demangled;
 	}
     }
+  /* FIXME(dje): Continually adding languages here is clumsy.
+     Better to just call la_demangle if !auto, and if auto then call
+     a utility routine that tries successive languages in turn and reports
+     which one it finds.  I realize the la_demangle options may be different
+     for different languages but there's already a FIXME for that.  */
+  if (gsymbol->language == language_go
+      || gsymbol->language == language_auto)
+    {
+      demangled = go_demangle (mangled, 0);
+      if (demangled != NULL)
+	{
+	  gsymbol->language = language_go;
+	  return demangled;
+	}
+    }
+
   /* We could support `gsymbol->language == language_fortran' here to provide
      module namespaces also for inferiors with only minimal symbol table (ELF
      symbols).  Just the mangling standard is not standardized across compilers
@@ -530,14 +700,16 @@ symbol_set_names (struct general_symbol_info *gsymbol,
          name with the symbol, we don't need to use the same trick
          as Java.  */
       if (!copy_name)
-	gsymbol->name = (char *) linkage_name;
+	gsymbol->name = linkage_name;
       else
 	{
-	  gsymbol->name = obstack_alloc (&objfile->objfile_obstack, len + 1);
-	  memcpy (gsymbol->name, linkage_name, len);
-	  gsymbol->name[len] = '\0';
+	  char *name = obstack_alloc (&objfile->objfile_obstack, len + 1);
+
+	  memcpy (name, linkage_name, len);
+	  name[len] = '\0';
+	  gsymbol->name = name;
 	}
-      gsymbol->language_specific.cplus_specific.demangled_name = NULL;
+      symbol_set_demangled_name (gsymbol, NULL, NULL);
 
       return;
     }
@@ -586,7 +758,11 @@ symbol_set_names (struct general_symbol_info *gsymbol,
 			  &entry, INSERT));
 
   /* If this name is not in the hash table, add it.  */
-  if (*slot == NULL)
+  if (*slot == NULL
+      /* A C version of the symbol may have already snuck into the table.
+	 This happens to, e.g., main.init (__go_init_main).  Cope.  */
+      || (gsymbol->language == language_go
+	  && (*slot)->demangled[0] == '\0'))
     {
       char *demangled_name = symbol_find_demangled_name (gsymbol,
 							 linkage_name_copy);
@@ -633,31 +809,31 @@ symbol_set_names (struct general_symbol_info *gsymbol,
 
   gsymbol->name = (*slot)->mangled + lookup_len - len;
   if ((*slot)->demangled[0] != '\0')
-    gsymbol->language_specific.cplus_specific.demangled_name
-      = (*slot)->demangled;
+    symbol_set_demangled_name (gsymbol, (*slot)->demangled, objfile);
   else
-    gsymbol->language_specific.cplus_specific.demangled_name = NULL;
+    symbol_set_demangled_name (gsymbol, NULL, objfile);
 }
 
 /* Return the source code name of a symbol.  In languages where
    demangling is necessary, this is the demangled name.  */
 
-char *
+const char *
 symbol_natural_name (const struct general_symbol_info *gsymbol)
 {
   switch (gsymbol->language)
     {
     case language_cplus:
     case language_d:
+    case language_go:
     case language_java:
     case language_objc:
     case language_fortran:
-      if (gsymbol->language_specific.cplus_specific.demangled_name != NULL)
-	return gsymbol->language_specific.cplus_specific.demangled_name;
+      if (symbol_get_demangled_name (gsymbol) != NULL)
+	return symbol_get_demangled_name (gsymbol);
       break;
     case language_ada:
-      if (gsymbol->language_specific.cplus_specific.demangled_name != NULL)
-	return gsymbol->language_specific.cplus_specific.demangled_name;
+      if (symbol_get_demangled_name (gsymbol) != NULL)
+	return symbol_get_demangled_name (gsymbol);
       else
 	return ada_decode_symbol (gsymbol);
       break;
@@ -668,37 +844,40 @@ symbol_natural_name (const struct general_symbol_info *gsymbol)
 }
 
 /* Return the demangled name for a symbol based on the language for
-   that symbol.  If no demangled name exists, return NULL. */
-char *
+   that symbol.  If no demangled name exists, return NULL.  */
+
+const char *
 symbol_demangled_name (const struct general_symbol_info *gsymbol)
 {
+  const char *dem_name = NULL;
+
   switch (gsymbol->language)
     {
     case language_cplus:
     case language_d:
+    case language_go:
     case language_java:
     case language_objc:
     case language_fortran:
-      if (gsymbol->language_specific.cplus_specific.demangled_name != NULL)
-	return gsymbol->language_specific.cplus_specific.demangled_name;
+      dem_name = symbol_get_demangled_name (gsymbol);
       break;
     case language_ada:
-      if (gsymbol->language_specific.cplus_specific.demangled_name != NULL)
-	return gsymbol->language_specific.cplus_specific.demangled_name;
-      else
-	return ada_decode_symbol (gsymbol);
+      dem_name = symbol_get_demangled_name (gsymbol);
+      if (dem_name == NULL)
+	dem_name = ada_decode_symbol (gsymbol);
       break;
     default:
       break;
     }
-  return NULL;
+  return dem_name;
 }
 
 /* Return the search name of a symbol---generally the demangled or
    linkage name of the symbol, depending on how it will be searched for.
    If there is no distinct demangled name, then returns the same value
-   (same pointer) as SYMBOL_LINKAGE_NAME. */
-char *
+   (same pointer) as SYMBOL_LINKAGE_NAME.  */
+
+const char *
 symbol_search_name (const struct general_symbol_info *gsymbol)
 {
   if (gsymbol->language == language_ada)
@@ -708,6 +887,7 @@ symbol_search_name (const struct general_symbol_info *gsymbol)
 }
 
 /* Initialize the structure fields to zero values.  */
+
 void
 init_sal (struct symtab_and_line *sal)
 {
@@ -719,6 +899,7 @@ init_sal (struct symtab_and_line *sal)
   sal->end = 0;
   sal->explicit_pc = 0;
   sal->explicit_line = 0;
+  sal->probe = NULL;
 }
 
 
@@ -937,39 +1118,36 @@ fixup_symbol_section (struct symbol *sym, struct objfile *objfile)
   return sym;
 }
 
-/* Find the definition for a specified symbol name NAME
-   in domain DOMAIN, visible from lexical block BLOCK.
-   Returns the struct symbol pointer, or zero if no symbol is found.
-   C++: if IS_A_FIELD_OF_THIS is nonzero on entry, check to see if
-   NAME is a field of the current implied argument `this'.  If so set
-   *IS_A_FIELD_OF_THIS to 1, otherwise set it to zero.
-   BLOCK_FOUND is set to the block in which NAME is found (in the case of
-   a field of `this', value_of_this sets BLOCK_FOUND to the proper value.) */
+/* Compute the demangled form of NAME as used by the various symbol
+   lookup functions.  The result is stored in *RESULT_NAME.  Returns a
+   cleanup which can be used to clean up the result.
 
-/* This function has a bunch of loops in it and it would seem to be
-   attractive to put in some QUIT's (though I'm not really sure
-   whether it can run long enough to be really important).  But there
-   are a few calls for which it would appear to be bad news to quit
-   out of here: find_proc_desc in alpha-tdep.c and mips-tdep.c.  (Note
-   that there is C++ code below which can error(), but that probably
-   doesn't affect these calls since they are looking for a known
-   variable and thus can probably assume it will never hit the C++
-   code).  */
+   For Ada, this function just sets *RESULT_NAME to NAME, unmodified.
+   Normally, Ada symbol lookups are performed using the encoded name
+   rather than the demangled name, and so it might seem to make sense
+   for this function to return an encoded version of NAME.
+   Unfortunately, we cannot do this, because this function is used in
+   circumstances where it is not appropriate to try to encode NAME.
+   For instance, when displaying the frame info, we demangle the name
+   of each parameter, and then perform a symbol lookup inside our
+   function using that demangled name.  In Ada, certain functions
+   have internally-generated parameters whose name contain uppercase
+   characters.  Encoding those name would result in those uppercase
+   characters to become lowercase, and thus cause the symbol lookup
+   to fail.  */
 
-struct symbol *
-lookup_symbol_in_language (const char *name, const struct block *block,
-			   const domain_enum domain, enum language lang,
-			   int *is_a_field_of_this)
+struct cleanup *
+demangle_for_lookup (const char *name, enum language lang,
+		     const char **result_name)
 {
   char *demangled_name = NULL;
   const char *modified_name = NULL;
-  struct symbol *returnval;
   struct cleanup *cleanup = make_cleanup (null_cleanup, 0);
 
   modified_name = name;
 
-  /* If we are using C++, D, or Java, demangle the name before doing a
-     lookup, so we can always binary search. */
+  /* If we are using C++, D, Go, or Java, demangle the name before doing a
+     lookup, so we can always binary search.  */
   if (lang == language_cplus)
     {
       demangled_name = cplus_demangle (name, DMGL_ANSI | DMGL_PARAMS);
@@ -1009,19 +1187,47 @@ lookup_symbol_in_language (const char *name, const struct block *block,
 	  make_cleanup (xfree, demangled_name);
 	}
     }
-
-  if (case_sensitivity == case_sensitive_off)
+  else if (lang == language_go)
     {
-      char *copy;
-      int len, i;
-
-      len = strlen (name);
-      copy = (char *) alloca (len + 1);
-      for (i= 0; i < len; i++)
-        copy[i] = tolower (name[i]);
-      copy[len] = 0;
-      modified_name = copy;
+      demangled_name = go_demangle (name, 0);
+      if (demangled_name)
+	{
+	  modified_name = demangled_name;
+	  make_cleanup (xfree, demangled_name);
+	}
     }
+
+  *result_name = modified_name;
+  return cleanup;
+}
+
+/* Find the definition for a specified symbol name NAME
+   in domain DOMAIN, visible from lexical block BLOCK.
+   Returns the struct symbol pointer, or zero if no symbol is found.
+   C++: if IS_A_FIELD_OF_THIS is nonzero on entry, check to see if
+   NAME is a field of the current implied argument `this'.  If so set
+   *IS_A_FIELD_OF_THIS to 1, otherwise set it to zero.
+   BLOCK_FOUND is set to the block in which NAME is found (in the case of
+   a field of `this', value_of_this sets BLOCK_FOUND to the proper value.)  */
+
+/* This function (or rather its subordinates) have a bunch of loops and
+   it would seem to be attractive to put in some QUIT's (though I'm not really
+   sure whether it can run long enough to be really important).  But there
+   are a few calls for which it would appear to be bad news to quit
+   out of here: e.g., find_proc_desc in alpha-mdebug-tdep.c.  (Note
+   that there is C++ code below which can error(), but that probably
+   doesn't affect these calls since they are looking for a known
+   variable and thus can probably assume it will never hit the C++
+   code).  */
+
+struct symbol *
+lookup_symbol_in_language (const char *name, const struct block *block,
+			   const domain_enum domain, enum language lang,
+			   int *is_a_field_of_this)
+{
+  const char *modified_name;
+  struct symbol *returnval;
+  struct cleanup *cleanup = demangle_for_lookup (name, lang, &modified_name);
 
   returnval = lookup_symbol_aux (modified_name, block, domain, lang,
 				 is_a_field_of_this);
@@ -1042,10 +1248,36 @@ lookup_symbol (const char *name, const struct block *block,
 				    is_a_field_of_this);
 }
 
+/* Look up the `this' symbol for LANG in BLOCK.  Return the symbol if
+   found, or NULL if not found.  */
+
+struct symbol *
+lookup_language_this (const struct language_defn *lang,
+		      const struct block *block)
+{
+  if (lang->la_name_of_this == NULL || block == NULL)
+    return NULL;
+
+  while (block)
+    {
+      struct symbol *sym;
+
+      sym = lookup_block_symbol (block, lang->la_name_of_this, VAR_DOMAIN);
+      if (sym != NULL)
+	{
+	  block_found = block;
+	  return sym;
+	}
+      if (BLOCK_FUNCTION (block))
+	break;
+      block = BLOCK_SUPERBLOCK (block);
+    }
+
+  return NULL;
+}
+
 /* Behave like lookup_symbol except that NAME is the natural name
-   of the symbol that we're looking for and, if LINKAGE_NAME is
-   non-NULL, ensure that the symbol's linkage name matches as
-   well.  */
+   (e.g., demangled name) of the symbol that we're looking for.  */
 
 static struct symbol *
 lookup_symbol_aux (const char *name, const struct block *block,
@@ -1075,20 +1307,10 @@ lookup_symbol_aux (const char *name, const struct block *block,
 
   langdef = language_def (language);
 
-  if (langdef->la_name_of_this != NULL && is_a_field_of_this != NULL
-      && block != NULL)
+  if (is_a_field_of_this != NULL)
     {
-      struct symbol *sym = NULL;
-      const struct block *function_block = block;
+      struct symbol *sym = lookup_language_this (langdef, block);
 
-      /* 'this' is only defined in the function's block, so find the
-	 enclosing function block.  */
-      for (; function_block && !BLOCK_FUNCTION (function_block);
-	   function_block = BLOCK_SUPERBLOCK (function_block));
-
-      if (function_block && !dict_empty (BLOCK_DICT (function_block)))
-	sym = lookup_block_symbol (function_block, langdef->la_name_of_this,
-				   VAR_DOMAIN);
       if (sym)
 	{
 	  struct type *t = sym->type;
@@ -1129,7 +1351,7 @@ lookup_symbol_aux (const char *name, const struct block *block,
 /* Search all static file-level symbols for NAME from DOMAIN.  Do the symtabs
    first, then check the psymtabs.  If a psymtab indicates the existence of the
    desired name as a file-level static, then do psymtab-to-symtab conversion on
-   the fly and return the found symbol. */
+   the fly and return the found symbol.  */
 
 struct symbol *
 lookup_static_symbol_aux (const char *name, const domain_enum domain)
@@ -1176,12 +1398,8 @@ lookup_symbol_aux_local (const char *name, const struct block *block,
 
       if (language == language_cplus || language == language_fortran)
         {
-          sym = cp_lookup_symbol_imports (scope,
-                                          name,
-                                          block,
-                                          domain,
-                                          1,
-                                          1);
+          sym = cp_lookup_symbol_imports_or_template (scope, name, block,
+						      domain);
           if (sym != NULL)
             return sym;
         }
@@ -1259,17 +1477,17 @@ lookup_global_symbol_from_objfile (const struct objfile *main_objfile,
        objfile = objfile_separate_debug_iterate (main_objfile, objfile))
     {
       /* Go through symtabs.  */
-      ALL_OBJFILE_SYMTABS (objfile, s)
-        {
-          bv = BLOCKVECTOR (s);
-          block = BLOCKVECTOR_BLOCK (bv, GLOBAL_BLOCK);
-          sym = lookup_block_symbol (block, name, domain);
-          if (sym)
-            {
-              block_found = block;
-              return fixup_symbol_section (sym, (struct objfile *)objfile);
-            }
-        }
+      ALL_OBJFILE_PRIMARY_SYMTABS (objfile, s)
+	{
+	  bv = BLOCKVECTOR (s);
+	  block = BLOCKVECTOR_BLOCK (bv, GLOBAL_BLOCK);
+	  sym = lookup_block_symbol (block, name, domain);
+	  if (sym)
+	    {
+	      block_found = block;
+	      return fixup_symbol_section (sym, (struct objfile *)objfile);
+	    }
+	}
 
       sym = lookup_symbol_aux_quick ((struct objfile *) objfile, GLOBAL_BLOCK,
 				     name, domain);
@@ -1280,10 +1498,41 @@ lookup_global_symbol_from_objfile (const struct objfile *main_objfile,
   return NULL;
 }
 
-/* Check to see if the symbol is defined in one of the symtabs.
-   BLOCK_INDEX should be either GLOBAL_BLOCK or STATIC_BLOCK,
+/* Check to see if the symbol is defined in one of the OBJFILE's
+   symtabs.  BLOCK_INDEX should be either GLOBAL_BLOCK or STATIC_BLOCK,
    depending on whether or not we want to search global symbols or
    static symbols.  */
+
+static struct symbol *
+lookup_symbol_aux_objfile (struct objfile *objfile, int block_index,
+			   const char *name, const domain_enum domain)
+{
+  struct symbol *sym = NULL;
+  struct blockvector *bv;
+  const struct block *block;
+  struct symtab *s;
+
+  if (objfile->sf)
+    objfile->sf->qf->pre_expand_symtabs_matching (objfile, block_index,
+						  name, domain);
+
+  ALL_OBJFILE_PRIMARY_SYMTABS (objfile, s)
+    {
+      bv = BLOCKVECTOR (s);
+      block = BLOCKVECTOR_BLOCK (bv, block_index);
+      sym = lookup_block_symbol (block, name, domain);
+      if (sym)
+	{
+	  block_found = block;
+	  return fixup_symbol_section (sym, objfile);
+	}
+    }
+
+  return NULL;
+}
+
+/* Same as lookup_symbol_aux_objfile, except that it searches all
+   objfiles.  Return the first match found.  */
 
 static struct symbol *
 lookup_symbol_aux_symtabs (int block_index, const char *name,
@@ -1291,31 +1540,56 @@ lookup_symbol_aux_symtabs (int block_index, const char *name,
 {
   struct symbol *sym;
   struct objfile *objfile;
-  struct blockvector *bv;
-  const struct block *block;
-  struct symtab *s;
 
   ALL_OBJFILES (objfile)
   {
-    if (objfile->sf)
-      objfile->sf->qf->pre_expand_symtabs_matching (objfile,
-						    block_index,
-						    name, domain);
-
-    ALL_OBJFILE_SYMTABS (objfile, s)
-      if (s->primary)
-	{
-	  bv = BLOCKVECTOR (s);
-	  block = BLOCKVECTOR_BLOCK (bv, block_index);
-	  sym = lookup_block_symbol (block, name, domain);
-	  if (sym)
-	    {
-	      block_found = block;
-	      return fixup_symbol_section (sym, objfile);
-	    }
-	}
+    sym = lookup_symbol_aux_objfile (objfile, block_index, name, domain);
+    if (sym)
+      return sym;
   }
 
+  return NULL;
+}
+
+/* Wrapper around lookup_symbol_aux_objfile for search_symbols.
+   Look up LINKAGE_NAME in DOMAIN in the global and static blocks of OBJFILE
+   and all related objfiles.  */
+
+static struct symbol *
+lookup_symbol_in_objfile_from_linkage_name (struct objfile *objfile,
+					    const char *linkage_name,
+					    domain_enum domain)
+{
+  enum language lang = current_language->la_language;
+  const char *modified_name;
+  struct cleanup *cleanup = demangle_for_lookup (linkage_name, lang,
+						 &modified_name);
+  struct objfile *main_objfile, *cur_objfile;
+
+  if (objfile->separate_debug_objfile_backlink)
+    main_objfile = objfile->separate_debug_objfile_backlink;
+  else
+    main_objfile = objfile;
+
+  for (cur_objfile = main_objfile;
+       cur_objfile;
+       cur_objfile = objfile_separate_debug_iterate (main_objfile, cur_objfile))
+    {
+      struct symbol *sym;
+
+      sym = lookup_symbol_aux_objfile (cur_objfile, GLOBAL_BLOCK,
+				       modified_name, domain);
+      if (sym == NULL)
+	sym = lookup_symbol_aux_objfile (cur_objfile, STATIC_BLOCK,
+					 modified_name, domain);
+      if (sym != NULL)
+	{
+	  do_cleanups (cleanup);
+	  return sym;
+	}
+    }
+
+  do_cleanups (cleanup);
   return NULL;
 }
 
@@ -1344,7 +1618,7 @@ lookup_symbol_aux_quick (struct objfile *objfile, int kind,
     {
       /* This shouldn't be necessary, but as a last resort try
 	 looking in the statics even though the psymtab claimed
-	 the symbol was global, or vice-versa. It's possible
+	 the symbol was global, or vice-versa.  It's possible
 	 that the psymtab gets it wrong in some cases.  */
 
       /* FIXME: carlton/2002-09-30: Should we really do that?
@@ -1358,7 +1632,10 @@ lookup_symbol_aux_quick (struct objfile *objfile, int kind,
 				 STATIC_BLOCK : GLOBAL_BLOCK);
       sym = lookup_block_symbol (block, name, domain);
       if (!sym)
-	error (_("Internal: %s symbol `%s' found in %s psymtab but not in symtab.\n%s may be an inlined function, or may be a template function\n(if a template, try specifying an instantiation: %s<type>)."),
+	error (_("\
+Internal: %s symbol `%s' found in %s psymtab but not in symtab.\n\
+%s may be an inlined function, or may be a template function\n\
+(if a template, try specifying an instantiation: %s<type>)."),
 	       kind == GLOBAL_BLOCK ? "global" : "static",
 	       name, symtab->filename, name, name);
     }
@@ -1427,6 +1704,46 @@ lookup_symbol_static (const char *name,
     return NULL;
 }
 
+/* Private data to be used with lookup_symbol_global_iterator_cb.  */
+
+struct global_sym_lookup_data
+{
+  /* The name of the symbol we are searching for.  */
+  const char *name;
+
+  /* The domain to use for our search.  */
+  domain_enum domain;
+
+  /* The field where the callback should store the symbol if found.
+     It should be initialized to NULL before the search is started.  */
+  struct symbol *result;
+};
+
+/* A callback function for gdbarch_iterate_over_objfiles_in_search_order.
+   It searches by name for a symbol in the GLOBAL_BLOCK of the given
+   OBJFILE.  The arguments for the search are passed via CB_DATA,
+   which in reality is a pointer to struct global_sym_lookup_data.  */
+
+static int
+lookup_symbol_global_iterator_cb (struct objfile *objfile,
+				  void *cb_data)
+{
+  struct global_sym_lookup_data *data =
+    (struct global_sym_lookup_data *) cb_data;
+
+  gdb_assert (data->result == NULL);
+
+  data->result = lookup_symbol_aux_objfile (objfile, GLOBAL_BLOCK,
+					    data->name, data->domain);
+  if (data->result == NULL)
+    data->result = lookup_symbol_aux_quick (objfile, GLOBAL_BLOCK,
+					    data->name, data->domain);
+
+  /* If we found a match, tell the iterator to stop.  Otherwise,
+     keep going.  */
+  return (data->result != NULL);
+}
+
 /* Lookup a symbol in all files' global blocks (searching psymtabs if
    necessary).  */
 
@@ -1437,6 +1754,7 @@ lookup_symbol_global (const char *name,
 {
   struct symbol *sym = NULL;
   struct objfile *objfile = NULL;
+  struct global_sym_lookup_data lookup_data;
 
   /* Call library-specific lookup procedure.  */
   objfile = lookup_objfile_from_block (block);
@@ -1445,18 +1763,14 @@ lookup_symbol_global (const char *name,
   if (sym != NULL)
     return sym;
 
-  sym = lookup_symbol_aux_symtabs (GLOBAL_BLOCK, name, domain);
-  if (sym != NULL)
-    return sym;
+  memset (&lookup_data, 0, sizeof (lookup_data));
+  lookup_data.name = name;
+  lookup_data.domain = domain;
+  gdbarch_iterate_over_objfiles_in_search_order
+    (objfile != NULL ? get_objfile_arch (objfile) : target_gdbarch,
+     lookup_symbol_global_iterator_cb, &lookup_data, objfile);
 
-  ALL_OBJFILES (objfile)
-  {
-    sym = lookup_symbol_aux_quick (objfile, GLOBAL_BLOCK, name, domain);
-    if (sym)
-      return sym;
-  }
-
-  return NULL;
+  return lookup_data.result;
 }
 
 int
@@ -1517,14 +1831,15 @@ basic_lookup_transparent_type_quick (struct objfile *objfile, int kind,
 
       /* This shouldn't be necessary, but as a last resort
        * try looking in the 'other kind' even though the psymtab
-       * claimed the symbol was one thing. It's possible that
+       * claimed the symbol was one thing.  It's possible that
        * the psymtab gets it wrong in some cases.
        */
       block = BLOCKVECTOR_BLOCK (bv, other_kind);
       sym = lookup_block_symbol (block, name, STRUCT_DOMAIN);
       if (!sym)
-	/* FIXME; error is wrong in one case */
-	error (_("Internal: global symbol `%s' found in %s psymtab but not in symtab.\n\
+	/* FIXME; error is wrong in one case.  */
+	error (_("\
+Internal: global symbol `%s' found in %s psymtab but not in symtab.\n\
 %s may be an inlined function, or may be a template function\n\
 (if a template, try specifying an instantiation: %s<type>)."),
 	       name, symtab->filename, name, name);
@@ -1552,7 +1867,7 @@ basic_lookup_transparent_type (const char *name)
   struct type *t;
 
   /* Now search all the global symbols.  Do the symtab's first, then
-     check the psymtab's. If a psymtab indicates the existence
+     check the psymtab's.  If a psymtab indicates the existence
      of the desired name as a global, then do psymtab-to-symtab
      conversion on the fly and return the found symbol.  */
 
@@ -1563,17 +1878,16 @@ basic_lookup_transparent_type (const char *name)
 						    GLOBAL_BLOCK,
 						    name, STRUCT_DOMAIN);
 
-    ALL_OBJFILE_SYMTABS (objfile, s)
-      if (s->primary)
-	{
-	  bv = BLOCKVECTOR (s);
-	  block = BLOCKVECTOR_BLOCK (bv, GLOBAL_BLOCK);
-	  sym = lookup_block_symbol (block, name, STRUCT_DOMAIN);
-	  if (sym && !TYPE_IS_OPAQUE (SYMBOL_TYPE (sym)))
-	    {
-	      return SYMBOL_TYPE (sym);
-	    }
-	}
+    ALL_OBJFILE_PRIMARY_SYMTABS (objfile, s)
+      {
+	bv = BLOCKVECTOR (s);
+	block = BLOCKVECTOR_BLOCK (bv, GLOBAL_BLOCK);
+	sym = lookup_block_symbol (block, name, STRUCT_DOMAIN);
+	if (sym && !TYPE_IS_OPAQUE (SYMBOL_TYPE (sym)))
+	  {
+	    return SYMBOL_TYPE (sym);
+	  }
+      }
   }
 
   ALL_OBJFILES (objfile)
@@ -1586,10 +1900,9 @@ basic_lookup_transparent_type (const char *name)
   /* Now search the static file-level symbols.
      Not strictly correct, but more useful than an error.
      Do the symtab's first, then
-     check the psymtab's. If a psymtab indicates the existence
+     check the psymtab's.  If a psymtab indicates the existence
      of the desired name as a file-level static, then do psymtab-to-symtab
-     conversion on the fly and return the found symbol.
-   */
+     conversion on the fly and return the found symbol.  */
 
   ALL_OBJFILES (objfile)
   {
@@ -1597,7 +1910,7 @@ basic_lookup_transparent_type (const char *name)
       objfile->sf->qf->pre_expand_symtabs_matching (objfile, STATIC_BLOCK,
 						    name, STRUCT_DOMAIN);
 
-    ALL_OBJFILE_SYMTABS (objfile, s)
+    ALL_OBJFILE_PRIMARY_SYMTABS (objfile, s)
       {
 	bv = BLOCKVECTOR (s);
 	block = BLOCKVECTOR_BLOCK (bv, STATIC_BLOCK);
@@ -1619,10 +1932,9 @@ basic_lookup_transparent_type (const char *name)
   return (struct type *) 0;
 }
 
-
-/* Find the name of the file containing main(). */
+/* Find the name of the file containing main().  */
 /* FIXME:  What about languages without main() or specially linked
-   executables that have no main() ? */
+   executables that have no main() ?   */
 
 const char *
 find_main_filename (void)
@@ -1652,21 +1964,20 @@ find_main_filename (void)
    binary search terminates, we drop through and do a straight linear
    search on the symbols.  Each symbol which is marked as being a ObjC/C++
    symbol (language_cplus or language_objc set) has both the encoded and
-   non-encoded names tested for a match.
-*/
+   non-encoded names tested for a match.  */
 
 struct symbol *
 lookup_block_symbol (const struct block *block, const char *name,
 		     const domain_enum domain)
 {
-  struct dict_iterator iter;
+  struct block_iterator iter;
   struct symbol *sym;
 
   if (!BLOCK_FUNCTION (block))
     {
-      for (sym = dict_iter_name_first (BLOCK_DICT (block), name, &iter);
+      for (sym = block_iter_name_first (block, name, &iter);
 	   sym != NULL;
-	   sym = dict_iter_name_next (name, &iter))
+	   sym = block_iter_name_next (name, &iter))
 	{
 	  if (symbol_matches_domain (SYMBOL_LANGUAGE (sym),
 				     SYMBOL_DOMAIN (sym), domain))
@@ -1684,9 +1995,9 @@ lookup_block_symbol (const struct block *block, const char *name,
 
       struct symbol *sym_found = NULL;
 
-      for (sym = dict_iter_name_first (BLOCK_DICT (block), name, &iter);
+      for (sym = block_iter_name_first (block, name, &iter);
 	   sym != NULL;
-	   sym = dict_iter_name_next (name, &iter))
+	   sym = block_iter_name_next (name, &iter))
 	{
 	  if (symbol_matches_domain (SYMBOL_LANGUAGE (sym),
 				     SYMBOL_DOMAIN (sym), domain))
@@ -1698,12 +2009,50 @@ lookup_block_symbol (const struct block *block, const char *name,
 		}
 	    }
 	}
-      return (sym_found);	/* Will be NULL if not found. */
+      return (sym_found);	/* Will be NULL if not found.  */
+    }
+}
+
+/* Iterate over the symbols named NAME, matching DOMAIN, starting with
+   BLOCK.
+   
+   For each symbol that matches, CALLBACK is called.  The symbol and
+   DATA are passed to the callback.
+   
+   If CALLBACK returns zero, the iteration ends.  Otherwise, the
+   search continues.  This function iterates upward through blocks.
+   When the outermost block has been finished, the function
+   returns.  */
+
+void
+iterate_over_symbols (const struct block *block, const char *name,
+		      const domain_enum domain,
+		      symbol_found_callback_ftype *callback,
+		      void *data)
+{
+  while (block)
+    {
+      struct block_iterator iter;
+      struct symbol *sym;
+
+      for (sym = block_iter_name_first (block, name, &iter);
+	   sym != NULL;
+	   sym = block_iter_name_next (name, &iter))
+	{
+	  if (symbol_matches_domain (SYMBOL_LANGUAGE (sym),
+				     SYMBOL_DOMAIN (sym), domain))
+	    {
+	      if (!callback (sym, data))
+		return;
+	    }
+	}
+
+      block = BLOCK_SUPERBLOCK (block);
     }
 }
 
 /* Find the symtab associated with PC and SECTION.  Look through the
-   psymtabs and read in another symtab if necessary. */
+   psymtabs and read in another symtab if necessary.  */
 
 struct symtab *
 find_pc_sect_symtab (CORE_ADDR pc, struct obj_section *section)
@@ -1740,7 +2089,7 @@ find_pc_sect_symtab (CORE_ADDR pc, struct obj_section *section)
      0x1000-0x4000, but for address 0x2345 we want to return symtab b.
 
      This happens for native ecoff format, where code from included files
-     gets its own symtab. The symtab for the included file should have
+     gets its own symtab.  The symtab for the included file should have
      been read in already via the dependency mechanism.
      It might be swifter to create several symtabs with the same name
      like xcoff does (I'm not sure).
@@ -1763,7 +2112,7 @@ find_pc_sect_symtab (CORE_ADDR pc, struct obj_section *section)
 	   and we simply return its corresponding symtab.  */
 	/* In order to better support objfiles that contain both
 	   stabs and coff debugging info, we continue on if a psymtab
-	   can't be found. */
+	   can't be found.  */
 	if ((objfile->flags & OBJF_REORDERED) && objfile->sf)
 	  {
 	    struct symtab *result;
@@ -1778,7 +2127,7 @@ find_pc_sect_symtab (CORE_ADDR pc, struct obj_section *section)
 	  }
 	if (section != 0)
 	  {
-	    struct dict_iterator iter;
+	    struct block_iterator iter;
 	    struct symbol *sym = NULL;
 
 	    ALL_BLOCK_SYMBOLS (b, iter, sym)
@@ -1788,7 +2137,8 @@ find_pc_sect_symtab (CORE_ADDR pc, struct obj_section *section)
 		  break;
 	      }
 	    if (sym == NULL)
-	      continue;		/* no symbol in this symtab matches section */
+	      continue;		/* No symbol in this symtab matches
+				   section.  */
 	  }
 	distance = BLOCK_END (b) - BLOCK_START (b);
 	best_s = s;
@@ -1815,8 +2165,8 @@ find_pc_sect_symtab (CORE_ADDR pc, struct obj_section *section)
   return NULL;
 }
 
-/* Find the symtab associated with PC.  Look through the psymtabs and
-   read in another symtab if necessary.  Backward compatibility, no section */
+/* Find the symtab associated with PC.  Look through the psymtabs and read
+   in another symtab if necessary.  Backward compatibility, no section.  */
 
 struct symtab *
 find_pc_symtab (CORE_ADDR pc)
@@ -1854,6 +2204,7 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
   struct blockvector *bv;
   struct minimal_symbol *msymbol;
   struct minimal_symbol *mfunsym;
+  struct objfile *objfile;
 
   /* Info on best line seen so far, and where it starts, and its file.  */
 
@@ -1895,10 +2246,10 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
 
   /* elz: added this because this function returned the wrong
      information if the pc belongs to a stub (import/export)
-     to call a shlib function. This stub would be anywhere between
+     to call a shlib function.  This stub would be anywhere between
      two functions in the target, and the line info was erroneously
-     taken to be the one of the line before the pc.
-   */
+     taken to be the one of the line before the pc.  */
+
   /* RT: Further explanation:
 
    * We have stubs (trampolines) inserted between procedures.
@@ -1907,7 +2258,7 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
    * exists in the main image.
    *
    * In the minimal symbol table, we have a bunch of symbols
-   * sorted by start address. The stubs are marked as "trampoline",
+   * sorted by start address.  The stubs are marked as "trampoline",
    * the others appear as text. E.g.:
    *
    *  Minimal symbol table for main image
@@ -1927,13 +2278,13 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
    *
    * Assumptions being made about the minimal symbol table:
    *   1. lookup_minimal_symbol_by_pc() will return a trampoline only
-   *      if we're really in the trampoline. If we're beyond it (say
+   *      if we're really in the trampoline.s If we're beyond it (say
    *      we're in "foo" in the above example), it'll have a closer
    *      symbol (the "foo" text symbol for example) and will not
    *      return the trampoline.
    *   2. lookup_minimal_symbol_text() will find a real text symbol
    *      corresponding to the trampoline, and whose address will
-   *      be different than the trampoline address. I put in a sanity
+   *      be different than the trampoline address.  I put in a sanity
    *      check for the address being the same, to avoid an
    *      infinite recursion.
    */
@@ -1952,13 +2303,18 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
 	   * In the above situation, the shared lib is not loaded yet,
 	   * so of course we can't find the real func/line info,
 	   * but the "break" still works, and the warning is annoying.
-	   * So I commented out the warning. RT */
-	  /* warning ("In stub for %s; unable to find real function/line info", SYMBOL_LINKAGE_NAME (msymbol)) */ ;
+	   * So I commented out the warning.  RT */
+	  /* warning ("In stub for %s; unable to find real function/line info",
+	     SYMBOL_LINKAGE_NAME (msymbol)); */
+	  ;
 	/* fall through */
-	else if (SYMBOL_VALUE_ADDRESS (mfunsym) == SYMBOL_VALUE_ADDRESS (msymbol))
+	else if (SYMBOL_VALUE_ADDRESS (mfunsym)
+		 == SYMBOL_VALUE_ADDRESS (msymbol))
 	  /* Avoid infinite recursion */
-	  /* See above comment about why warning is commented out */
-	  /* warning ("In stub for %s; unable to find real function/line info", SYMBOL_LINKAGE_NAME (msymbol)) */ ;
+	  /* See above comment about why warning is commented out.  */
+	  /* warning ("In stub for %s; unable to find real function/line info",
+	     SYMBOL_LINKAGE_NAME (msymbol)); */
+	  ;
 	/* fall through */
 	else
 	  return find_pc_line (SYMBOL_VALUE_ADDRESS (mfunsym), 0);
@@ -1968,7 +2324,7 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
   s = find_pc_sect_symtab (pc, section);
   if (!s)
     {
-      /* if no symbol information, return previous pc */
+      /* If no symbol information, return previous pc.  */
       if (notcurrent)
 	pc++;
       val.pc = pc;
@@ -1976,13 +2332,17 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
     }
 
   bv = BLOCKVECTOR (s);
+  objfile = s->objfile;
 
   /* Look at all the symtabs that share this blockvector.
      They all have the same apriori range, that we found was right;
      but they have different line tables.  */
 
-  for (; s && BLOCKVECTOR (s) == bv; s = s->next)
+  ALL_OBJFILE_SYMTABS (objfile, s)
     {
+      if (BLOCKVECTOR (s) != bv)
+	continue;
+
       /* Find the best line in this symtab.  */
       l = LINETABLE (s);
       if (!l)
@@ -1998,7 +2358,7 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
 	}
 
       prev = NULL;
-      item = l->item;		/* Get first line info */
+      item = l->item;		/* Get first line info.  */
 
       /* Is this file's first line closer than the first lines of other files?
          If so, record this file, and its first line, as best alternate.  */
@@ -2058,7 +2418,7 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
     {
       /* If our best fit is in a range of PC's for which no line
 	 number info is available (line number is zero) then we didn't
-	 find any valid line information. */
+	 find any valid line information.  */
       val.pc = pc;
     }
   else
@@ -2077,7 +2437,7 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
   return val;
 }
 
-/* Backward compatibility (no section) */
+/* Backward compatibility (no section).  */
 
 struct symtab_and_line
 find_pc_line (CORE_ADDR pc, int notcurrent)
@@ -2116,7 +2476,7 @@ find_line_symtab (struct symtab *symtab, int line,
   /* First try looking it up in the given symtab.  */
   best_linetable = LINETABLE (symtab);
   best_symtab = symtab;
-  best_index = find_line_common (best_linetable, line, &exact);
+  best_index = find_line_common (best_linetable, line, &exact, 0);
   if (best_index < 0 || !exact)
     {
       /* Didn't find an exact match.  So we better keep looking for
@@ -2161,7 +2521,7 @@ find_line_symtab (struct symtab *symtab, int line,
 	    && FILENAME_CMP (symtab->fullname, s->fullname) != 0)
 	  continue;	
 	l = LINETABLE (s);
-	ind = find_line_common (l, line, &exact);
+	ind = find_line_common (l, line, &exact, 0);
 	if (ind >= 0)
 	  {
 	    if (exact)
@@ -2192,6 +2552,46 @@ done:
 
   return best_symtab;
 }
+
+/* Given SYMTAB, returns all the PCs function in the symtab that
+   exactly match LINE.  Returns NULL if there are no exact matches,
+   but updates BEST_ITEM in this case.  */
+
+VEC (CORE_ADDR) *
+find_pcs_for_symtab_line (struct symtab *symtab, int line,
+			  struct linetable_entry **best_item)
+{
+  int start = 0, ix;
+  struct symbol *previous_function = NULL;
+  VEC (CORE_ADDR) *result = NULL;
+
+  /* First, collect all the PCs that are at this line.  */
+  while (1)
+    {
+      int was_exact;
+      int idx;
+
+      idx = find_line_common (LINETABLE (symtab), line, &was_exact, start);
+      if (idx < 0)
+	break;
+
+      if (!was_exact)
+	{
+	  struct linetable_entry *item = &LINETABLE (symtab)->item[idx];
+
+	  if (*best_item == NULL || item->line < (*best_item)->line)
+	    *best_item = item;
+
+	  break;
+	}
+
+      VEC_safe_push (CORE_ADDR, result, LINETABLE (symtab)->item[idx].pc);
+      start = idx + 1;
+    }
+
+  return result;
+}
+
 
 /* Set the PC value for a given source file and line number and return true.
    Returns zero for invalid line number (and sets the PC to 0).
@@ -2260,12 +2660,13 @@ find_line_pc_range (struct symtab_and_line sal, CORE_ADDR *startptr,
 /* Given a line table and a line number, return the index into the line
    table for the pc of the nearest line whose number is >= the specified one.
    Return -1 if none is found.  The value is >= 0 if it is an index.
+   START is the index at which to start searching the line table.
 
    Set *EXACT_MATCH nonzero if the value returned is an exact match.  */
 
 static int
 find_line_common (struct linetable *l, int lineno,
-		  int *exact_match)
+		  int *exact_match, int start)
 {
   int i;
   int len;
@@ -2285,7 +2686,7 @@ find_line_common (struct linetable *l, int lineno,
     return -1;
 
   len = l->nitems;
-  for (i = 0; i < len; i++)
+  for (i = start; i < len; i++)
     {
       struct linetable_entry *item = &(l->item[i]);
 
@@ -2322,7 +2723,8 @@ find_pc_line_pc_range (CORE_ADDR pc, CORE_ADDR *startptr, CORE_ADDR *endptr)
    address for that function that has an entry in SYMTAB's line info
    table.  If such an entry cannot be found, return FUNC_ADDR
    unaltered.  */
-CORE_ADDR
+
+static CORE_ADDR
 skip_prologue_using_lineinfo (CORE_ADDR func_addr, struct symtab *symtab)
 {
   CORE_ADDR func_start, func_end;
@@ -2393,18 +2795,20 @@ find_function_start_sal (struct symbol *sym, int funfirstline)
    If the PC was explicitly specified, the SAL is not changed.
    If the line number was explicitly specified, at most the SAL's PC
    is updated.  If SAL is already past the prologue, then do nothing.  */
+
 void
 skip_prologue_sal (struct symtab_and_line *sal)
 {
   struct symbol *sym;
   struct symtab_and_line start_sal;
   struct cleanup *old_chain;
-  CORE_ADDR pc;
+  CORE_ADDR pc, saved_pc;
   struct obj_section *section;
   const char *name;
   struct objfile *objfile;
   struct gdbarch *gdbarch;
   struct block *b, *function_block;
+  int force_skip, skip;
 
   /* Do not change the SAL is PC was specified explicitly.  */
   if (sal->explicit_pc)
@@ -2442,46 +2846,69 @@ skip_prologue_sal (struct symtab_and_line *sal)
 
   gdbarch = get_objfile_arch (objfile);
 
-  /* If the function is in an unmapped overlay, use its unmapped LMA address,
-     so that gdbarch_skip_prologue has something unique to work on.  */
-  if (section_is_overlay (section) && !section_is_mapped (section))
-    pc = overlay_unmapped_address (pc, section);
+  /* Process the prologue in two passes.  In the first pass try to skip the
+     prologue (SKIP is true) and verify there is a real need for it (indicated
+     by FORCE_SKIP).  If no such reason was found run a second pass where the
+     prologue is not skipped (SKIP is false).  */
 
-  /* Skip "first line" of function (which is actually its prologue).  */
-  pc += gdbarch_deprecated_function_start_offset (gdbarch);
-  pc = gdbarch_skip_prologue (gdbarch, pc);
+  skip = 1;
+  force_skip = 1;
 
-  /* For overlays, map pc back into its mapped VMA range.  */
-  pc = overlay_mapped_address (pc, section);
+  /* Be conservative - allow direct PC (without skipping prologue) only if we
+     have proven the CU (Compilation Unit) supports it.  sal->SYMTAB does not
+     have to be set by the caller so we use SYM instead.  */
+  if (sym && SYMBOL_SYMTAB (sym)->locations_valid)
+    force_skip = 0;
 
-  /* Calculate line number.  */
-  start_sal = find_pc_sect_line (pc, section, 0);
-
-  /* Check if gdbarch_skip_prologue left us in mid-line, and the next
-     line is still part of the same function.  */
-  if (start_sal.pc != pc
-      && (sym? (BLOCK_START (SYMBOL_BLOCK_VALUE (sym)) <= start_sal.end
-	        && start_sal.end < BLOCK_END (SYMBOL_BLOCK_VALUE (sym)))
-          : (lookup_minimal_symbol_by_pc_section (start_sal.end, section)
-             == lookup_minimal_symbol_by_pc_section (pc, section))))
+  saved_pc = pc;
+  do
     {
-      /* First pc of next line */
-      pc = start_sal.end;
-      /* Recalculate the line number (might not be N+1).  */
-      start_sal = find_pc_sect_line (pc, section, 0);
-    }
+      pc = saved_pc;
 
-  /* On targets with executable formats that don't have a concept of
-     constructors (ELF with .init has, PE doesn't), gcc emits a call
-     to `__main' in `main' between the prologue and before user
-     code.  */
-  if (gdbarch_skip_main_prologue_p (gdbarch)
-      && name && strcmp (name, "main") == 0)
-    {
-      pc = gdbarch_skip_main_prologue (gdbarch, pc);
-      /* Recalculate the line number (might not be N+1).  */
+      /* If the function is in an unmapped overlay, use its unmapped LMA address,
+	 so that gdbarch_skip_prologue has something unique to work on.  */
+      if (section_is_overlay (section) && !section_is_mapped (section))
+	pc = overlay_unmapped_address (pc, section);
+
+      /* Skip "first line" of function (which is actually its prologue).  */
+      pc += gdbarch_deprecated_function_start_offset (gdbarch);
+      if (skip)
+	pc = gdbarch_skip_prologue (gdbarch, pc);
+
+      /* For overlays, map pc back into its mapped VMA range.  */
+      pc = overlay_mapped_address (pc, section);
+
+      /* Calculate line number.  */
       start_sal = find_pc_sect_line (pc, section, 0);
+
+      /* Check if gdbarch_skip_prologue left us in mid-line, and the next
+	 line is still part of the same function.  */
+      if (skip && start_sal.pc != pc
+	  && (sym ? (BLOCK_START (SYMBOL_BLOCK_VALUE (sym)) <= start_sal.end
+		     && start_sal.end < BLOCK_END (SYMBOL_BLOCK_VALUE (sym)))
+	      : (lookup_minimal_symbol_by_pc_section (start_sal.end, section)
+		 == lookup_minimal_symbol_by_pc_section (pc, section))))
+	{
+	  /* First pc of next line */
+	  pc = start_sal.end;
+	  /* Recalculate the line number (might not be N+1).  */
+	  start_sal = find_pc_sect_line (pc, section, 0);
+	}
+
+      /* On targets with executable formats that don't have a concept of
+	 constructors (ELF with .init has, PE doesn't), gcc emits a call
+	 to `__main' in `main' between the prologue and before user
+	 code.  */
+      if (gdbarch_skip_main_prologue_p (gdbarch)
+	  && name && strcmp_iw (name, "main") == 0)
+	{
+	  pc = gdbarch_skip_main_prologue (gdbarch, pc);
+	  /* Recalculate the line number (might not be N+1).  */
+	  start_sal = find_pc_sect_line (pc, section, 0);
+	  force_skip = 1;
+	}
     }
+  while (!force_skip && skip--);
 
   /* If we still don't have a valid source line, try to find the first
      PC in the lineinfo table that belongs to the same function.  This
@@ -2491,7 +2918,7 @@ skip_prologue_sal (struct symtab_and_line *sal)
      the case with the DJGPP target using "gcc -gcoff" when the
      compiler inserted code after the prologue to make sure the stack
      is aligned.  */
-  if (sym && start_sal.symtab == NULL)
+  if (!force_skip && sym && start_sal.symtab == NULL)
     {
       pc = skip_prologue_using_lineinfo (pc, SYMBOL_SYMTAB (sym));
       /* Recalculate the line number.  */
@@ -2541,7 +2968,8 @@ skip_prologue_sal (struct symtab_and_line *sal)
    some legitimate operator text, return a pointer to the
    beginning of the substring of the operator text.
    Otherwise, return "".  */
-char *
+
+static char *
 operator_chars (char *p, char **end)
 {
   *end = "";
@@ -2558,7 +2986,7 @@ operator_chars (char *p, char **end)
   while (*p == ' ' || *p == '\t')
     p++;
 
-  /* Recognize 'operator TYPENAME'. */
+  /* Recognize 'operator TYPENAME'.  */
 
   if (isalpha (*p) || *p == '_' || *p == '$')
     {
@@ -2576,7 +3004,7 @@ operator_chars (char *p, char **end)
       case '\\':			/* regexp quoting */
 	if (p[1] == '*')
 	  {
-	    if (p[2] == '=')	/* 'operator\*=' */
+	    if (p[2] == '=')		/* 'operator\*=' */
 	      *end = p + 3;
 	    else			/* 'operator\*'  */
 	      *end = p + 2;
@@ -2585,7 +3013,8 @@ operator_chars (char *p, char **end)
 	else if (p[1] == '[')
 	  {
 	    if (p[2] == ']')
-	      error (_("mismatched quoting on brackets, try 'operator\\[\\]'"));
+	      error (_("mismatched quoting on brackets, "
+		       "try 'operator\\[\\]'"));
 	    else if (p[2] == '\\' && p[3] == ']')
 	      {
 		*end = p + 4;	/* 'operator\[\]' */
@@ -2596,7 +3025,7 @@ operator_chars (char *p, char **end)
 	  }
 	else
 	  {
-	    /* Gratuitous qoute: skip it and move on. */
+	    /* Gratuitous qoute: skip it and move on.  */
 	    p++;
 	    continue;
 	  }
@@ -2620,7 +3049,7 @@ operator_chars (char *p, char **end)
       case '|':
 	if (p[0] == '-' && p[1] == '>')
 	  {
-	    /* Struct pointer member operator 'operator->'. */
+	    /* Struct pointer member operator 'operator->'.  */
 	    if (p[2] == '*')
 	      {
 		*end = p + 3;	/* 'operator->*' */
@@ -2648,17 +3077,20 @@ operator_chars (char *p, char **end)
 	return p;
       case '(':
 	if (p[1] != ')')
-	  error (_("`operator ()' must be specified without whitespace in `()'"));
+	  error (_("`operator ()' must be specified "
+		   "without whitespace in `()'"));
 	*end = p + 2;
 	return p;
       case '?':
 	if (p[1] != ':')
-	  error (_("`operator ?:' must be specified without whitespace in `?:'"));
+	  error (_("`operator ?:' must be specified "
+		   "without whitespace in `?:'"));
 	*end = p + 2;
 	return p;
       case '[':
 	if (p[1] != ']')
-	  error (_("`operator []' must be specified without whitespace in `[]'"));
+	  error (_("`operator []' must be specified "
+		   "without whitespace in `[]'"));
 	*end = p + 2;
 	return p;
       default:
@@ -2671,55 +3103,93 @@ operator_chars (char *p, char **end)
 }
 
 
-/* If FILE is not already in the table of files, return zero;
-   otherwise return non-zero.  Optionally add FILE to the table if ADD
-   is non-zero.  If *FIRST is non-zero, forget the old table
-   contents.  */
-static int
-filename_seen (const char *file, int add, int *first)
+/* Cache to watch for file names already seen by filename_seen.  */
+
+struct filename_seen_cache
 {
   /* Table of files seen so far.  */
-  static const char **tab = NULL;
-  /* Allocated size of tab in elements.
-     Start with one 256-byte block (when using GNU malloc.c).
-     24 is the malloc overhead when range checking is in effect.  */
-  static int tab_alloc_size = (256 - 24) / sizeof (char *);
-  /* Current size of tab in elements.  */
-  static int tab_cur_size;
-  const char **p;
+  htab_t tab;
+  /* Initial size of the table.  It automagically grows from here.  */
+#define INITIAL_FILENAME_SEEN_CACHE_SIZE 100
+};
 
-  if (*first)
-    {
-      if (tab == NULL)
-	tab = (const char **) xmalloc (tab_alloc_size * sizeof (*tab));
-      tab_cur_size = 0;
-    }
+/* filename_seen_cache constructor.  */
+
+static struct filename_seen_cache *
+create_filename_seen_cache (void)
+{
+  struct filename_seen_cache *cache;
+
+  cache = XNEW (struct filename_seen_cache);
+  cache->tab = htab_create_alloc (INITIAL_FILENAME_SEEN_CACHE_SIZE,
+				  filename_hash, filename_eq,
+				  NULL, xcalloc, xfree);
+
+  return cache;
+}
+
+/* Empty the cache, but do not delete it.  */
+
+static void
+clear_filename_seen_cache (struct filename_seen_cache *cache)
+{
+  htab_empty (cache->tab);
+}
+
+/* filename_seen_cache destructor.
+   This takes a void * argument as it is generally used as a cleanup.  */
+
+static void
+delete_filename_seen_cache (void *ptr)
+{
+  struct filename_seen_cache *cache = ptr;
+
+  htab_delete (cache->tab);
+  xfree (cache);
+}
+
+/* If FILE is not already in the table of files in CACHE, return zero;
+   otherwise return non-zero.  Optionally add FILE to the table if ADD
+   is non-zero.
+
+   NOTE: We don't manage space for FILE, we assume FILE lives as long
+   as the caller needs.  */
+
+static int
+filename_seen (struct filename_seen_cache *cache, const char *file, int add)
+{
+  void **slot;
 
   /* Is FILE in tab?  */
-  for (p = tab; p < tab + tab_cur_size; p++)
-    if (strcmp (*p, file) == 0)
-      return 1;
+  slot = htab_find_slot (cache->tab, file, add ? INSERT : NO_INSERT);
+  if (*slot != NULL)
+    return 1;
 
   /* No; maybe add it to tab.  */
   if (add)
-    {
-      if (tab_cur_size == tab_alloc_size)
-	{
-	  tab_alloc_size *= 2;
-	  tab = (const char **) xrealloc ((char *) tab,
-					  tab_alloc_size * sizeof (*tab));
-	}
-      tab[tab_cur_size++] = file;
-    }
+    *slot = (char *) file;
 
   return 0;
 }
 
+/* Data structure to maintain printing state for output_source_filename.  */
+
+struct output_source_filename_data
+{
+  /* Cache of what we've seen so far.  */
+  struct filename_seen_cache *filename_seen_cache;
+
+  /* Flag of whether we're printing the first one.  */
+  int first;
+};
+
 /* Slave routine for sources_info.  Force line breaks at ,'s.
-   NAME is the name to print and *FIRST is nonzero if this is the first
-   name printed.  Set *FIRST to zero.  */
+   NAME is the name to print.
+   DATA contains the state for printing and watching for duplicates.  */
+
 static void
-output_source_filename (const char *name, int *first)
+output_source_filename (const char *name,
+			struct output_source_filename_data *data)
 {
   /* Since a single source file can result in several partial symbol
      tables, we need to avoid printing it more than once.  Note: if
@@ -2731,28 +3201,25 @@ output_source_filename (const char *name, int *first)
      symtabs; it doesn't hurt to check.  */
 
   /* Was NAME already seen?  */
-  if (filename_seen (name, 1, first))
+  if (filename_seen (data->filename_seen_cache, name, 1))
     {
       /* Yes; don't print it again.  */
       return;
     }
+
   /* No; print it and reset *FIRST.  */
-  if (*first)
-    {
-      *first = 0;
-    }
-  else
-    {
-      printf_filtered (", ");
-    }
+  if (! data->first)
+    printf_filtered (", ");
+  data->first = 0;
 
   wrap_here ("");
   fputs_filtered (name, gdb_stdout);
 }
 
 /* A callback for map_partial_symbol_filenames.  */
+
 static void
-output_partial_symbol_filename (const char *fullname, const char *filename,
+output_partial_symbol_filename (const char *filename, const char *fullname,
 				void *data)
 {
   output_source_filename (fullname ? fullname : filename, data);
@@ -2763,29 +3230,39 @@ sources_info (char *ignore, int from_tty)
 {
   struct symtab *s;
   struct objfile *objfile;
-  int first;
+  struct output_source_filename_data data;
+  struct cleanup *cleanups;
 
   if (!have_full_symbols () && !have_partial_symbols ())
     {
       error (_("No symbol table is loaded.  Use the \"file\" command."));
     }
 
+  data.filename_seen_cache = create_filename_seen_cache ();
+  cleanups = make_cleanup (delete_filename_seen_cache,
+			   data.filename_seen_cache);
+
   printf_filtered ("Source files for which symbols have been read in:\n\n");
 
-  first = 1;
+  data.first = 1;
   ALL_SYMTABS (objfile, s)
   {
     const char *fullname = symtab_to_fullname (s);
 
-    output_source_filename (fullname ? fullname : s->filename, &first);
+    output_source_filename (fullname ? fullname : s->filename, &data);
   }
   printf_filtered ("\n\n");
 
-  printf_filtered ("Source files for which symbols will be read in on demand:\n\n");
+  printf_filtered ("Source files for which symbols "
+		   "will be read in on demand:\n\n");
 
-  first = 1;
-  map_partial_symbol_filenames (output_partial_symbol_filename, &first);
+  clear_filename_seen_cache (data.filename_seen_cache);
+  data.first = 1;
+  map_partial_symbol_filenames (output_partial_symbol_filename, &data,
+				1 /*need_fullname*/);
   printf_filtered ("\n");
+
+  do_cleanups (cleanups);
 }
 
 static int
@@ -2797,7 +3274,7 @@ file_matches (const char *file, char *files[], int nfiles)
     {
       for (i = 0; i < nfiles; i++)
 	{
-	  if (strcmp (files[i], lbasename (file)) == 0)
+	  if (filename_cmp (files[i], lbasename (file)) == 0)
 	    return 1;
 	}
     }
@@ -2806,7 +3283,8 @@ file_matches (const char *file, char *files[], int nfiles)
   return 0;
 }
 
-/* Free any memory associated with a search. */
+/* Free any memory associated with a search.  */
+
 void
 free_search_symbols (struct symbol_search *symbols)
 {
@@ -2834,6 +3312,7 @@ make_cleanup_free_search_symbols (struct symbol_search *symbols)
 
 /* Helper function for sort_search_symbols and qsort.  Can only
    sort symbols, not minimal symbols.  */
+
 static int
 compare_search_syms (const void *sa, const void *sb)
 {
@@ -2847,6 +3326,7 @@ compare_search_syms (const void *sa, const void *sb)
 /* Sort the ``nfound'' symbols in the list after prevtail.  Leave
    prevtail where it is, but update its next pointer to point to
    the first of the sorted symbols.  */
+
 static struct symbol_search *
 sort_search_symbols (struct symbol_search *prevtail, int nfound)
 {
@@ -2885,10 +3365,14 @@ struct search_symbols_data
 {
   int nfiles;
   char **files;
-  char *regexp;
+
+  /* It is true if PREG contains valid data, false otherwise.  */
+  unsigned preg_p : 1;
+  regex_t preg;
 };
 
 /* A callback for expand_symtabs_matching.  */
+
 static int
 search_symbols_file_matches (const char *filename, void *user_data)
 {
@@ -2898,50 +3382,52 @@ search_symbols_file_matches (const char *filename, void *user_data)
 }
 
 /* A callback for expand_symtabs_matching.  */
+
 static int
 search_symbols_name_matches (const char *symname, void *user_data)
 {
   struct search_symbols_data *data = user_data;
 
-  return data->regexp == NULL || re_exec (symname);
+  return !data->preg_p || regexec (&data->preg, symname, 0, NULL, 0) == 0;
 }
 
 /* Search the symbol table for matches to the regular expression REGEXP,
    returning the results in *MATCHES.
 
    Only symbols of KIND are searched:
+   VARIABLES_DOMAIN - search all symbols, excluding functions, type names,
+                      and constants (enums)
    FUNCTIONS_DOMAIN - search all functions
    TYPES_DOMAIN     - search all type names
-   VARIABLES_DOMAIN - search all symbols, excluding functions, type names,
-   and constants (enums)
+   ALL_DOMAIN       - an internal error for this function
 
    free_search_symbols should be called when *MATCHES is no longer needed.
 
    The results are sorted locally; each symtab's global and static blocks are
-   separately alphabetized.
- */
+   separately alphabetized.  */
+
 void
-search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
+search_symbols (char *regexp, enum search_domain kind,
+		int nfiles, char *files[],
 		struct symbol_search **matches)
 {
   struct symtab *s;
   struct blockvector *bv;
   struct block *b;
   int i = 0;
-  struct dict_iterator iter;
+  struct block_iterator iter;
   struct symbol *sym;
   struct objfile *objfile;
   struct minimal_symbol *msymbol;
-  char *val;
   int found_misc = 0;
-  static enum minimal_symbol_type types[]
-    = {mst_data, mst_text, mst_abs, mst_unknown};
-  static enum minimal_symbol_type types2[]
-    = {mst_bss, mst_file_text, mst_abs, mst_unknown};
-  static enum minimal_symbol_type types3[]
-    = {mst_file_data, mst_solib_trampoline, mst_abs, mst_unknown};
-  static enum minimal_symbol_type types4[]
-    = {mst_file_bss, mst_text, mst_abs, mst_unknown};
+  static const enum minimal_symbol_type types[]
+    = {mst_data, mst_text, mst_abs};
+  static const enum minimal_symbol_type types2[]
+    = {mst_bss, mst_file_text, mst_abs};
+  static const enum minimal_symbol_type types3[]
+    = {mst_file_data, mst_solib_trampoline, mst_abs};
+  static const enum minimal_symbol_type types4[]
+    = {mst_file_bss, mst_text_gnu_ifunc, mst_abs};
   enum minimal_symbol_type ourtype;
   enum minimal_symbol_type ourtype2;
   enum minimal_symbol_type ourtype3;
@@ -2949,46 +3435,52 @@ search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
   struct symbol_search *sr;
   struct symbol_search *psr;
   struct symbol_search *tail;
-  struct cleanup *old_chain = NULL;
   struct search_symbols_data datum;
 
-  if (kind < VARIABLES_DOMAIN)
-    error (_("must search on specific domain"));
+  /* OLD_CHAIN .. RETVAL_CHAIN is always freed, RETVAL_CHAIN .. current
+     CLEANUP_CHAIN is freed only in the case of an error.  */
+  struct cleanup *old_chain = make_cleanup (null_cleanup, NULL);
+  struct cleanup *retval_chain;
 
-  ourtype = types[(int) (kind - VARIABLES_DOMAIN)];
-  ourtype2 = types2[(int) (kind - VARIABLES_DOMAIN)];
-  ourtype3 = types3[(int) (kind - VARIABLES_DOMAIN)];
-  ourtype4 = types4[(int) (kind - VARIABLES_DOMAIN)];
+  gdb_assert (kind <= TYPES_DOMAIN);
+
+  ourtype = types[kind];
+  ourtype2 = types2[kind];
+  ourtype3 = types3[kind];
+  ourtype4 = types4[kind];
 
   sr = *matches = NULL;
   tail = NULL;
+  datum.preg_p = 0;
 
   if (regexp != NULL)
     {
       /* Make sure spacing is right for C++ operators.
          This is just a courtesy to make the matching less sensitive
          to how many spaces the user leaves between 'operator'
-         and <TYPENAME> or <OPERATOR>. */
+         and <TYPENAME> or <OPERATOR>.  */
       char *opend;
       char *opname = operator_chars (regexp, &opend);
+      int errcode;
 
       if (*opname)
 	{
-	  int fix = -1;		/* -1 means ok; otherwise number of spaces needed. */
+	  int fix = -1;		/* -1 means ok; otherwise number of
+                                    spaces needed.  */
 
 	  if (isalpha (*opname) || *opname == '_' || *opname == '$')
 	    {
-	      /* There should 1 space between 'operator' and 'TYPENAME'. */
+	      /* There should 1 space between 'operator' and 'TYPENAME'.  */
 	      if (opname[-1] != ' ' || opname[-2] == ' ')
 		fix = 1;
 	    }
 	  else
 	    {
-	      /* There should 0 spaces between 'operator' and 'OPERATOR'. */
+	      /* There should 0 spaces between 'operator' and 'OPERATOR'.  */
 	      if (opname[-1] == ' ')
 		fix = 0;
 	    }
-	  /* If wrong number of spaces, fix it. */
+	  /* If wrong number of spaces, fix it.  */
 	  if (fix >= 0)
 	    {
 	      char *tmp = (char *) alloca (8 + fix + strlen (opname) + 1);
@@ -2998,26 +3490,39 @@ search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
 	    }
 	}
 
-      if (0 != (val = re_comp (regexp)))
-	error (_("Invalid regexp (%s): %s"), val, regexp);
+      errcode = regcomp (&datum.preg, regexp,
+			 REG_NOSUB | (case_sensitivity == case_sensitive_off
+				      ? REG_ICASE : 0));
+      if (errcode != 0)
+	{
+	  char *err = get_regcomp_error (errcode, &datum.preg);
+
+	  make_cleanup (xfree, err);
+	  error (_("Invalid regexp (%s): %s"), err, regexp);
+	}
+      datum.preg_p = 1;
+      make_regfree_cleanup (&datum.preg);
     }
 
   /* Search through the partial symtabs *first* for all symbols
      matching the regexp.  That way we don't have to reproduce all of
-     the machinery below. */
+     the machinery below.  */
 
   datum.nfiles = nfiles;
   datum.files = files;
-  datum.regexp = regexp;
   ALL_OBJFILES (objfile)
   {
     if (objfile->sf)
       objfile->sf->qf->expand_symtabs_matching (objfile,
-						search_symbols_file_matches,
+						(nfiles == 0
+						 ? NULL
+						 : search_symbols_file_matches),
 						search_symbols_name_matches,
 						kind,
 						&datum);
   }
+
+  retval_chain = old_chain;
 
   /* Here, we search through the minimal symbol tables for functions
      and variables that match, and force their symbols to be read.
@@ -3026,11 +3531,14 @@ search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
      The symbol will then be found during the scan of symtabs below.
 
      For functions, find_pc_symtab should succeed if we have debug info
-     for the function, for variables we have to call lookup_symbol
-     to determine if the variable has debug info.
+     for the function, for variables we have to call
+     lookup_symbol_in_objfile_from_linkage_name to determine if the variable
+     has debug info.
      If the lookup fails, set found_misc so that we will rescan to print
      any matching symbols without debug info.
-   */
+     We only search the objfile the msymbol came from, we no longer search
+     all objfiles.  In large programs (1000s of shared libs) searching all
+     objfiles is not worth the pain.  */
 
   if (nfiles == 0 && (kind == VARIABLES_DOMAIN || kind == FUNCTIONS_DOMAIN))
     {
@@ -3038,29 +3546,27 @@ search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
       {
         QUIT;
 
-	if (MSYMBOL_TYPE (msymbol) == ourtype ||
-	    MSYMBOL_TYPE (msymbol) == ourtype2 ||
-	    MSYMBOL_TYPE (msymbol) == ourtype3 ||
-	    MSYMBOL_TYPE (msymbol) == ourtype4)
+	if (msymbol->created_by_gdb)
+	  continue;
+
+	if (MSYMBOL_TYPE (msymbol) == ourtype
+	    || MSYMBOL_TYPE (msymbol) == ourtype2
+	    || MSYMBOL_TYPE (msymbol) == ourtype3
+	    || MSYMBOL_TYPE (msymbol) == ourtype4)
 	  {
-	    if (regexp == NULL
-		|| re_exec (SYMBOL_NATURAL_NAME (msymbol)) != 0)
+	    if (!datum.preg_p
+		|| regexec (&datum.preg, SYMBOL_NATURAL_NAME (msymbol), 0,
+			    NULL, 0) == 0)
 	      {
-		if (0 == find_pc_symtab (SYMBOL_VALUE_ADDRESS (msymbol)))
-		  {
-		    /* FIXME: carlton/2003-02-04: Given that the
-		       semantics of lookup_symbol keeps on changing
-		       slightly, it would be a nice idea if we had a
-		       function lookup_symbol_minsym that found the
-		       symbol associated to a given minimal symbol (if
-		       any).  */
-		    if (kind == FUNCTIONS_DOMAIN
-			|| lookup_symbol (SYMBOL_LINKAGE_NAME (msymbol),
-					  (struct block *) NULL,
-					  VAR_DOMAIN, 0)
-			== NULL)
-		      found_misc = 1;
-		  }
+		/* Note: An important side-effect of these lookup functions
+		   is to expand the symbol table if msymbol is found, for the
+		   benefit of the next loop on ALL_PRIMARY_SYMTABS.  */
+		if (kind == FUNCTIONS_DOMAIN
+		    ? find_pc_symtab (SYMBOL_VALUE_ADDRESS (msymbol)) == NULL
+		    : (lookup_symbol_in_objfile_from_linkage_name
+		       (objfile, SYMBOL_LINKAGE_NAME (msymbol), VAR_DOMAIN)
+		       == NULL))
+		  found_misc = 1;
 	      }
 	  }
       }
@@ -3069,94 +3575,104 @@ search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
   ALL_PRIMARY_SYMTABS (objfile, s)
   {
     bv = BLOCKVECTOR (s);
-      for (i = GLOBAL_BLOCK; i <= STATIC_BLOCK; i++)
-	{
-	  struct symbol_search *prevtail = tail;
-	  int nfound = 0;
+    for (i = GLOBAL_BLOCK; i <= STATIC_BLOCK; i++)
+      {
+	struct symbol_search *prevtail = tail;
+	int nfound = 0;
 
-	  b = BLOCKVECTOR_BLOCK (bv, i);
-	  ALL_BLOCK_SYMBOLS (b, iter, sym)
-	    {
-	      struct symtab *real_symtab = SYMBOL_SYMTAB (sym);
+	b = BLOCKVECTOR_BLOCK (bv, i);
+	ALL_BLOCK_SYMBOLS (b, iter, sym)
+	  {
+	    struct symtab *real_symtab = SYMBOL_SYMTAB (sym);
 
-	      QUIT;
+	    QUIT;
 
-	      if (file_matches (real_symtab->filename, files, nfiles)
-		  && ((regexp == NULL
-		       || re_exec (SYMBOL_NATURAL_NAME (sym)) != 0)
-		      && ((kind == VARIABLES_DOMAIN
-			   && SYMBOL_CLASS (sym) != LOC_TYPEDEF
-			   && SYMBOL_CLASS (sym) != LOC_UNRESOLVED
-			   && SYMBOL_CLASS (sym) != LOC_BLOCK
-			   /* LOC_CONST can be used for more than just enums,
-			      e.g., c++ static const members.
-			      We only want to skip enums here.  */
-			   && !(SYMBOL_CLASS (sym) == LOC_CONST
-				&& TYPE_CODE (SYMBOL_TYPE (sym)) == TYPE_CODE_ENUM))
-			  || (kind == FUNCTIONS_DOMAIN && SYMBOL_CLASS (sym) == LOC_BLOCK)
-			  || (kind == TYPES_DOMAIN && SYMBOL_CLASS (sym) == LOC_TYPEDEF))))
-		{
-		  /* match */
-		  psr = (struct symbol_search *) xmalloc (sizeof (struct symbol_search));
-		  psr->block = i;
-		  psr->symtab = real_symtab;
-		  psr->symbol = sym;
-		  psr->msymbol = NULL;
-		  psr->next = NULL;
-		  if (tail == NULL)
-		    sr = psr;
-		  else
-		    tail->next = psr;
-		  tail = psr;
-		  nfound ++;
-		}
-	    }
-	  if (nfound > 0)
-	    {
-	      if (prevtail == NULL)
-		{
-		  struct symbol_search dummy;
+	    if (file_matches (real_symtab->filename, files, nfiles)
+		&& ((!datum.preg_p
+		     || regexec (&datum.preg, SYMBOL_NATURAL_NAME (sym), 0,
+				 NULL, 0) == 0)
+		    && ((kind == VARIABLES_DOMAIN
+			 && SYMBOL_CLASS (sym) != LOC_TYPEDEF
+			 && SYMBOL_CLASS (sym) != LOC_UNRESOLVED
+			 && SYMBOL_CLASS (sym) != LOC_BLOCK
+			 /* LOC_CONST can be used for more than just enums,
+			    e.g., c++ static const members.
+			    We only want to skip enums here.  */
+			 && !(SYMBOL_CLASS (sym) == LOC_CONST
+			      && TYPE_CODE (SYMBOL_TYPE (sym))
+			      == TYPE_CODE_ENUM))
+			|| (kind == FUNCTIONS_DOMAIN 
+			    && SYMBOL_CLASS (sym) == LOC_BLOCK)
+			|| (kind == TYPES_DOMAIN
+			    && SYMBOL_CLASS (sym) == LOC_TYPEDEF))))
+	      {
+		/* match */
+		psr = (struct symbol_search *)
+		  xmalloc (sizeof (struct symbol_search));
+		psr->block = i;
+		psr->symtab = real_symtab;
+		psr->symbol = sym;
+		psr->msymbol = NULL;
+		psr->next = NULL;
+		if (tail == NULL)
+		  sr = psr;
+		else
+		  tail->next = psr;
+		tail = psr;
+		nfound ++;
+	      }
+	  }
+	if (nfound > 0)
+	  {
+	    if (prevtail == NULL)
+	      {
+		struct symbol_search dummy;
 
-		  dummy.next = sr;
-		  tail = sort_search_symbols (&dummy, nfound);
-		  sr = dummy.next;
+		dummy.next = sr;
+		tail = sort_search_symbols (&dummy, nfound);
+		sr = dummy.next;
 
-		  old_chain = make_cleanup_free_search_symbols (sr);
-		}
-	      else
-		tail = sort_search_symbols (prevtail, nfound);
-	    }
-	}
+		make_cleanup_free_search_symbols (sr);
+	      }
+	    else
+	      tail = sort_search_symbols (prevtail, nfound);
+	  }
+      }
   }
 
   /* If there are no eyes, avoid all contact.  I mean, if there are
      no debug symbols, then print directly from the msymbol_vector.  */
 
-  if (found_misc || kind != FUNCTIONS_DOMAIN)
+  if (found_misc || (nfiles == 0 && kind != FUNCTIONS_DOMAIN))
     {
       ALL_MSYMBOLS (objfile, msymbol)
       {
         QUIT;
 
-	if (MSYMBOL_TYPE (msymbol) == ourtype ||
-	    MSYMBOL_TYPE (msymbol) == ourtype2 ||
-	    MSYMBOL_TYPE (msymbol) == ourtype3 ||
-	    MSYMBOL_TYPE (msymbol) == ourtype4)
+	if (msymbol->created_by_gdb)
+	  continue;
+
+	if (MSYMBOL_TYPE (msymbol) == ourtype
+	    || MSYMBOL_TYPE (msymbol) == ourtype2
+	    || MSYMBOL_TYPE (msymbol) == ourtype3
+	    || MSYMBOL_TYPE (msymbol) == ourtype4)
 	  {
-	    if (regexp == NULL
-		|| re_exec (SYMBOL_NATURAL_NAME (msymbol)) != 0)
+	    if (!datum.preg_p
+		|| regexec (&datum.preg, SYMBOL_NATURAL_NAME (msymbol), 0,
+			    NULL, 0) == 0)
 	      {
-		/* Functions:  Look up by address. */
-		if (kind != FUNCTIONS_DOMAIN ||
-		    (0 == find_pc_symtab (SYMBOL_VALUE_ADDRESS (msymbol))))
+		/* For functions we can do a quick check of whether the
+		   symbol might be found via find_pc_symtab.  */
+		if (kind != FUNCTIONS_DOMAIN
+		    || find_pc_symtab (SYMBOL_VALUE_ADDRESS (msymbol)) == NULL)
 		  {
-		    /* Variables/Absolutes:  Look up by name */
-		    if (lookup_symbol (SYMBOL_LINKAGE_NAME (msymbol),
-				       (struct block *) NULL, VAR_DOMAIN, 0)
-			 == NULL)
+		    if (lookup_symbol_in_objfile_from_linkage_name
+			(objfile, SYMBOL_LINKAGE_NAME (msymbol), VAR_DOMAIN)
+			== NULL)
 		      {
 			/* match */
-			psr = (struct symbol_search *) xmalloc (sizeof (struct symbol_search));
+			psr = (struct symbol_search *)
+			  xmalloc (sizeof (struct symbol_search));
 			psr->block = i;
 			psr->msymbol = msymbol;
 			psr->symtab = NULL;
@@ -3165,7 +3681,7 @@ search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
 			if (tail == NULL)
 			  {
 			    sr = psr;
-			    old_chain = make_cleanup_free_search_symbols (sr);
+			    make_cleanup_free_search_symbols (sr);
 			  }
 			else
 			  tail->next = psr;
@@ -3177,20 +3693,21 @@ search_symbols (char *regexp, domain_enum kind, int nfiles, char *files[],
       }
     }
 
+  discard_cleanups (retval_chain);
+  do_cleanups (old_chain);
   *matches = sr;
-  if (sr != NULL)
-    discard_cleanups (old_chain);
 }
 
 /* Helper function for symtab_symbol_info, this function uses
    the data returned from search_symbols() to print information
-   regarding the match to gdb_stdout.
- */
+   regarding the match to gdb_stdout.  */
+
 static void
-print_symbol_info (domain_enum kind, struct symtab *s, struct symbol *sym,
+print_symbol_info (enum search_domain kind,
+		   struct symtab *s, struct symbol *sym,
 		   int block, char *last)
 {
-  if (last == NULL || strcmp (last, s->filename) != 0)
+  if (last == NULL || filename_cmp (last, s->filename) != 0)
     {
       fputs_filtered ("\nFile ", gdb_stdout);
       fputs_filtered (s->filename, gdb_stdout);
@@ -3200,14 +3717,14 @@ print_symbol_info (domain_enum kind, struct symtab *s, struct symbol *sym,
   if (kind != TYPES_DOMAIN && block == STATIC_BLOCK)
     printf_filtered ("static ");
 
-  /* Typedef that is not a C++ class */
+  /* Typedef that is not a C++ class.  */
   if (kind == TYPES_DOMAIN
       && SYMBOL_DOMAIN (sym) != STRUCT_DOMAIN)
     typedef_print (SYMBOL_TYPE (sym), sym, gdb_stdout);
-  /* variable, func, or typedef-that-is-c++-class */
-  else if (kind < TYPES_DOMAIN ||
-	   (kind == TYPES_DOMAIN &&
-	    SYMBOL_DOMAIN (sym) == STRUCT_DOMAIN))
+  /* variable, func, or typedef-that-is-c++-class.  */
+  else if (kind < TYPES_DOMAIN
+	   || (kind == TYPES_DOMAIN
+	       && SYMBOL_DOMAIN (sym) == STRUCT_DOMAIN))
     {
       type_print (SYMBOL_TYPE (sym),
 		  (SYMBOL_CLASS (sym) == LOC_TYPEDEF
@@ -3219,8 +3736,8 @@ print_symbol_info (domain_enum kind, struct symtab *s, struct symbol *sym,
 }
 
 /* This help function for symtab_symbol_info() prints information
-   for non-debugging symbols to gdb_stdout.
- */
+   for non-debugging symbols to gdb_stdout.  */
+
 static void
 print_msymbol_info (struct minimal_symbol *msymbol)
 {
@@ -3239,28 +3756,31 @@ print_msymbol_info (struct minimal_symbol *msymbol)
 }
 
 /* This is the guts of the commands "info functions", "info types", and
-   "info variables". It calls search_symbols to find all matches and then
+   "info variables".  It calls search_symbols to find all matches and then
    print_[m]symbol_info to print out some useful information about the
-   matches.
- */
+   matches.  */
+
 static void
-symtab_symbol_info (char *regexp, domain_enum kind, int from_tty)
+symtab_symbol_info (char *regexp, enum search_domain kind, int from_tty)
 {
-  static char *classnames[] = {"variable", "function", "type", "method"};
+  static const char * const classnames[] =
+    {"variable", "function", "type"};
   struct symbol_search *symbols;
   struct symbol_search *p;
   struct cleanup *old_chain;
   char *last_filename = NULL;
   int first = 1;
 
-  /* must make sure that if we're interrupted, symbols gets freed */
+  gdb_assert (kind <= TYPES_DOMAIN);
+
+  /* Must make sure that if we're interrupted, symbols gets freed.  */
   search_symbols (regexp, kind, 0, (char **) NULL, &symbols);
   old_chain = make_cleanup_free_search_symbols (symbols);
 
   printf_filtered (regexp
 		   ? "All %ss matching regular expression \"%s\":\n"
 		   : "All defined %ss:\n",
-		   classnames[(int) (kind - VARIABLES_DOMAIN)], regexp);
+		   classnames[kind], regexp);
 
   for (p = symbols; p != NULL; p = p->next)
     {
@@ -3308,7 +3828,7 @@ types_info (char *regexp, int from_tty)
   symtab_symbol_info (regexp, TYPES_DOMAIN, from_tty);
 }
 
-/* Breakpoint all functions matching regular expression. */
+/* Breakpoint all functions matching regular expression.  */
 
 void
 rbreak_command_wrapper (char *regexp, int from_tty)
@@ -3332,7 +3852,7 @@ rbreak_command (char *regexp, int from_tty)
   struct cleanup *old_chain;
   char *string = NULL;
   int len = 0;
-  char **files = NULL;
+  char **files = NULL, *file_name;
   int nfiles = 0;
 
   if (regexp)
@@ -3342,7 +3862,6 @@ rbreak_command (char *regexp, int from_tty)
       if (colon && *(colon + 1) != ':')
 	{
 	  int colon_index;
-	  char * file_name;
 
 	  colon_index = colon - regexp;
 	  file_name = alloca (colon_index + 1);
@@ -3410,11 +3929,64 @@ rbreak_command (char *regexp, int from_tty)
 }
 
 
+/* Evaluate if NAME matches SYM_TEXT and SYM_TEXT_LEN.
+
+   Either sym_text[sym_text_len] != '(' and then we search for any
+   symbol starting with SYM_TEXT text.
+
+   Otherwise sym_text[sym_text_len] == '(' and then we require symbol name to
+   be terminated at that point.  Partial symbol tables do not have parameters
+   information.  */
+
+static int
+compare_symbol_name (const char *name, const char *sym_text, int sym_text_len)
+{
+  int (*ncmp) (const char *, const char *, size_t);
+
+  ncmp = (case_sensitivity == case_sensitive_on ? strncmp : strncasecmp);
+
+  if (ncmp (name, sym_text, sym_text_len) != 0)
+    return 0;
+
+  if (sym_text[sym_text_len] == '(')
+    {
+      /* User searches for `name(someth...'.  Require NAME to be terminated.
+	 Normally psymtabs and gdbindex have no parameter types so '\0' will be
+	 present but accept even parameters presence.  In this case this
+	 function is in fact strcmp_iw but whitespace skipping is not supported
+	 for tab completion.  */
+
+      if (name[sym_text_len] != '\0' && name[sym_text_len] != '(')
+	return 0;
+    }
+
+  return 1;
+}
+
+/* Free any memory associated with a completion list.  */
+
+static void
+free_completion_list (VEC (char_ptr) **list_ptr)
+{
+  int i;
+  char *p;
+
+  for (i = 0; VEC_iterate (char_ptr, *list_ptr, i, p); ++i)
+    xfree (p);
+  VEC_free (char_ptr, *list_ptr);
+}
+
+/* Callback for make_cleanup.  */
+
+static void
+do_free_completion_list (void *list)
+{
+  free_completion_list (list);
+}
+
 /* Helper routine for make_symbol_completion_list.  */
 
-static int return_val_size;
-static int return_val_index;
-static char **return_val;
+static VEC (char_ptr) *return_val;
 
 #define COMPLETION_LIST_ADD_SYMBOL(symbol, sym_text, len, text, word) \
       completion_list_add_name \
@@ -3422,23 +3994,21 @@ static char **return_val;
 
 /*  Test to see if the symbol specified by SYMNAME (which is already
    demangled for C++ symbols) matches SYM_TEXT in the first SYM_TEXT_LEN
-   characters.  If so, add it to the current completion list. */
+   characters.  If so, add it to the current completion list.  */
 
 static void
-completion_list_add_name (char *symname, char *sym_text, int sym_text_len,
-			  char *text, char *word)
+completion_list_add_name (const char *symname,
+			  const char *sym_text, int sym_text_len,
+			  const char *text, const char *word)
 {
   int newsize;
 
-  /* clip symbols that cannot match */
-
-  if (strncmp (symname, sym_text, sym_text_len) != 0)
-    {
-      return;
-    }
+  /* Clip symbols that cannot match.  */
+  if (!compare_symbol_name (symname, sym_text, sym_text_len))
+    return;
 
   /* We have a match for a completion, so add SYMNAME to the current list
-     of matches. Note that the name is moved to freshly malloc'd space. */
+     of matches.  Note that the name is moved to freshly malloc'd space.  */
 
   {
     char *new;
@@ -3463,13 +4033,7 @@ completion_list_add_name (char *symname, char *sym_text, int sym_text_len,
 	strcat (new, symname);
       }
 
-    if (return_val_index + 3 > return_val_size)
-      {
-	newsize = (return_val_size *= 2) * sizeof (char *);
-	return_val = (char **) xrealloc ((char *) return_val, newsize);
-      }
-    return_val[return_val_index++] = new;
-    return_val[return_val_index] = NULL;
+    VEC_safe_push (char_ptr, return_val, new);
   }
 }
 
@@ -3477,13 +4041,14 @@ completion_list_add_name (char *symname, char *sym_text, int sym_text_len,
    again and feed all the selectors into the mill.  */
 
 static void
-completion_list_objc_symbol (struct minimal_symbol *msymbol, char *sym_text,
-			     int sym_text_len, char *text, char *word)
+completion_list_objc_symbol (struct minimal_symbol *msymbol,
+			     const char *sym_text, int sym_text_len,
+			     const char *text, const char *word)
 {
   static char *tmp = NULL;
   static unsigned int tmplen = 0;
 
-  char *method, *category, *selector;
+  const char *method, *category, *selector;
   char *tmp2 = NULL;
 
   method = SYMBOL_NATURAL_NAME (msymbol);
@@ -3533,7 +4098,7 @@ completion_list_objc_symbol (struct minimal_symbol *msymbol, char *sym_text,
 }
 
 /* Break the non-quoted text based on the characters which are in
-   symbols. FIXME: This should probably be language-specific. */
+   symbols.  FIXME: This should probably be language-specific.  */
 
 static char *
 language_search_unquoted_string (char *text, char *p)
@@ -3546,12 +4111,12 @@ language_search_unquoted_string (char *text, char *p)
 	{
 	  if ((current_language->la_language == language_objc))
 	    {
-	      if (p[-1] == ':')     /* might be part of a method name */
+	      if (p[-1] == ':')     /* Might be part of a method name.  */
 		continue;
 	      else if (p[-1] == '[' && (p[-2] == '-' || p[-2] == '+'))
-		p -= 2;             /* beginning of a method name */
+		p -= 2;             /* Beginning of a method name.  */
 	      else if (p[-1] == ' ' || p[-1] == '(' || p[-1] == ')')
-		{                   /* might be part of a method name */
+		{                   /* Might be part of a method name.  */
 		  char *t = p;
 
 		  /* Seeing a ' ' or a '(' is not conclusive evidence
@@ -3568,8 +4133,8 @@ language_search_unquoted_string (char *text, char *p)
 		      break;
 
 		  if (t[-1] == '[' && (t[-2] == '-' || t[-2] == '+'))
-		    p = t - 2;      /* method name detected */
-		  /* else we leave with p unchanged */
+		    p = t - 2;      /* Method name detected.  */
+		  /* Else we leave with p unchanged.  */
 		}
 	    }
 	  break;
@@ -3597,7 +4162,7 @@ completion_list_add_fields (struct symbol *sym, char *sym_text,
 }
 
 /* Type of the user_data argument passed to add_macro_name or
-   add_partial_symbol_name.  The contents are simply whatever is
+   expand_partial_symbol_name.  The contents are simply whatever is
    needed by completion_list_add_name.  */
 struct add_name_data
 {
@@ -3609,8 +4174,10 @@ struct add_name_data
 
 /* A callback used with macro_for_each and macro_for_each_in_scope.
    This adds a macro's name to the current completion list.  */
+
 static void
 add_macro_name (const char *name, const struct macro_definition *ignore,
+		struct macro_source_file *ignore2, int ignore3,
 		void *user_data)
 {
   struct add_name_data *datum = (struct add_name_data *) user_data;
@@ -3620,18 +4187,17 @@ add_macro_name (const char *name, const struct macro_definition *ignore,
 			    datum->text, datum->word);
 }
 
-/* A callback for map_partial_symbol_names.  */
-static void
-add_partial_symbol_name (const char *name, void *user_data)
+/* A callback for expand_partial_symbol_names.  */
+
+static int
+expand_partial_symbol_name (const char *name, void *user_data)
 {
   struct add_name_data *datum = (struct add_name_data *) user_data;
 
-  completion_list_add_name ((char *) name,
-			    datum->sym_text, datum->sym_text_len,
-			    datum->text, datum->word);
+  return compare_symbol_name (name, datum->sym_text, datum->sym_text_len);
 }
 
-char **
+VEC (char_ptr) *
 default_make_symbol_completion_list_break_on (char *text, char *word,
 					      const char *break_on)
 {
@@ -3645,12 +4211,13 @@ default_make_symbol_completion_list_break_on (char *text, char *word,
   struct objfile *objfile;
   struct block *b;
   const struct block *surrounding_static_block, *surrounding_global_block;
-  struct dict_iterator iter;
+  struct block_iterator iter;
   /* The symbol we are completing on.  Points in same buffer as text.  */
   char *sym_text;
   /* Length of sym_text.  */
   int sym_text_len;
   struct add_name_data datum;
+  struct cleanup *back_to;
 
   /* Now look for the symbol we are supposed to complete on.  */
   {
@@ -3685,9 +4252,7 @@ default_make_symbol_completion_list_break_on (char *text, char *word,
       /* A double-quoted string is never a symbol, nor does it make sense
          to complete it any other way.  */
       {
-	return_val = (char **) xmalloc (sizeof (char *));
-	return_val[0] = NULL;
-	return return_val;
+	return NULL;
       }
     else
       {
@@ -3707,10 +4272,24 @@ default_make_symbol_completion_list_break_on (char *text, char *word,
 
   sym_text_len = strlen (sym_text);
 
-  return_val_size = 100;
-  return_val_index = 0;
-  return_val = (char **) xmalloc ((return_val_size + 1) * sizeof (char *));
-  return_val[0] = NULL;
+  /* Prepare SYM_TEXT_LEN for compare_symbol_name.  */
+
+  if (current_language->la_language == language_cplus
+      || current_language->la_language == language_java
+      || current_language->la_language == language_fortran)
+    {
+      /* These languages may have parameters entered by user but they are never
+	 present in the partial symbol tables.  */
+
+      const char *cs = memchr (sym_text, '(', sym_text_len);
+
+      if (cs)
+	sym_text_len = cs - sym_text;
+    }
+  gdb_assert (sym_text[sym_text_len] == '\0' || sym_text[sym_text_len] == '(');
+
+  return_val = NULL;
+  back_to = make_cleanup (do_free_completion_list, &return_val);
 
   datum.sym_text = sym_text;
   datum.sym_text_len = sym_text_len;
@@ -3718,8 +4297,9 @@ default_make_symbol_completion_list_break_on (char *text, char *word,
   datum.word = word;
 
   /* Look through the partial symtabs for all symbols which begin
-     by matching SYM_TEXT.  Add each one that you find to the list.  */
-  map_partial_symbol_names (add_partial_symbol_name, &datum);
+     by matching SYM_TEXT.  Expand all CUs that you find to the list.
+     The real names will get added by COMPLETION_LIST_ADD_SYMBOL below.  */
+  expand_partial_symbol_names (expand_partial_symbol_name, &datum);
 
   /* At this point scan through the misc symbol vectors and add each
      symbol you find to the list.  Eventually we want to ignore
@@ -3737,7 +4317,7 @@ default_make_symbol_completion_list_break_on (char *text, char *word,
   /* Search upwards from currently selected frame (so that we can
      complete on local vars).  Also catch fields of types defined in
      this places which match our text string.  Only complete on types
-     visible from current context. */
+     visible from current context.  */
 
   b = get_selected_block (0);
   surrounding_static_block = block_static_block (b);
@@ -3819,20 +4399,21 @@ default_make_symbol_completion_list_break_on (char *text, char *word,
       macro_for_each (macro_user_macros, add_macro_name, &datum);
     }
 
+  discard_cleanups (back_to);
   return (return_val);
 }
 
-char **
+VEC (char_ptr) *
 default_make_symbol_completion_list (char *text, char *word)
 {
   return default_make_symbol_completion_list_break_on (text, word, "");
 }
 
-/* Return a NULL terminated array of all symbols (regardless of class)
-   which begin by matching TEXT.  If the answer is no symbols, then
-   the return value is an array which contains only a NULL pointer.  */
+/* Return a vector of all symbols (regardless of class) which begin by
+   matching TEXT.  If the answer is no symbols, then the return value
+   is NULL.  */
 
-char **
+VEC (char_ptr) *
 make_symbol_completion_list (char *text, char *word)
 {
   return current_language->la_make_symbol_completion_list (text, word);
@@ -3841,7 +4422,7 @@ make_symbol_completion_list (char *text, char *word)
 /* Like make_symbol_completion_list, but suitable for use as a
    completion function.  */
 
-char **
+VEC (char_ptr) *
 make_symbol_completion_list_fn (struct cmd_list_element *ignore,
 				char *text, char *word)
 {
@@ -3851,13 +4432,13 @@ make_symbol_completion_list_fn (struct cmd_list_element *ignore,
 /* Like make_symbol_completion_list, but returns a list of symbols
    defined in a source file FILE.  */
 
-char **
+VEC (char_ptr) *
 make_file_symbol_completion_list (char *text, char *word, char *srcfile)
 {
   struct symbol *sym;
   struct symtab *s;
   struct block *b;
-  struct dict_iterator iter;
+  struct block_iterator iter;
   /* The symbol we are completing on.  Points in same buffer as text.  */
   char *sym_text;
   /* Length of sym_text.  */
@@ -3897,9 +4478,7 @@ make_file_symbol_completion_list (char *text, char *word, char *srcfile)
       /* A double-quoted string is never a symbol, nor does it make sense
          to complete it any other way.  */
       {
-	return_val = (char **) xmalloc (sizeof (char *));
-	return_val[0] = NULL;
-	return return_val;
+	return NULL;
       }
     else
       {
@@ -3910,10 +4489,7 @@ make_file_symbol_completion_list (char *text, char *word, char *srcfile)
 
   sym_text_len = strlen (sym_text);
 
-  return_val_size = 10;
-  return_val_index = 0;
-  return_val = (char **) xmalloc ((return_val_size + 1) * sizeof (char *));
-  return_val[0] = NULL;
+  return_val = NULL;
 
   /* Find the symtab for SRCFILE (this loads it if it was not yet read
      in).  */
@@ -3956,17 +4532,10 @@ make_file_symbol_completion_list (char *text, char *word, char *srcfile)
 
 static void
 add_filename_to_list (const char *fname, char *text, char *word,
-		      char ***list, int *list_used, int *list_alloced)
+		      VEC (char_ptr) **list)
 {
   char *new;
   size_t fnlen = strlen (fname);
-
-  if (*list_used + 1 >= *list_alloced)
-    {
-      *list_alloced *= 2;
-      *list = (char **) xrealloc ((char *) *list,
-				  *list_alloced * sizeof (char *));
-    }
 
   if (word == text)
     {
@@ -3988,8 +4557,7 @@ add_filename_to_list (const char *fname, char *text, char *word,
       new[text - word] = '\0';
       strcat (new, fname);
     }
-  (*list)[*list_used] = new;
-  (*list)[++*list_used] = NULL;
+  VEC_safe_push (char_ptr, *list, new);
 }
 
 static int
@@ -4003,7 +4571,7 @@ not_interesting_fname (const char *fname)
 
   for (i = 0; illegal_aliens[i]; i++)
     {
-      if (strcmp (fname, illegal_aliens[i]) == 0)
+      if (filename_cmp (fname, illegal_aliens[i]) == 0)
 	return 1;
     }
   return 0;
@@ -4013,16 +4581,15 @@ not_interesting_fname (const char *fname)
    map_partial_symbol_filenames.  */
 struct add_partial_filename_data
 {
-  int *first;
+  struct filename_seen_cache *filename_seen_cache;
   char *text;
   char *word;
   int text_len;
-  char ***list;
-  int *list_used;
-  int *list_alloced;
+  VEC (char_ptr) **list;
 };
 
 /* A callback for map_partial_symbol_filenames.  */
+
 static void
 maybe_add_partial_symtab_filename (const char *filename, const char *fullname,
 				   void *user_data)
@@ -4031,75 +4598,60 @@ maybe_add_partial_symtab_filename (const char *filename, const char *fullname,
 
   if (not_interesting_fname (filename))
     return;
-  if (!filename_seen (filename, 1, data->first)
-#if HAVE_DOS_BASED_FILE_SYSTEM
-      && strncasecmp (filename, data->text, data->text_len) == 0
-#else
-      && strncmp (filename, data->text, data->text_len) == 0
-#endif
-      )
+  if (!filename_seen (data->filename_seen_cache, filename, 1)
+      && filename_ncmp (filename, data->text, data->text_len) == 0)
     {
       /* This file matches for a completion; add it to the
 	 current list of matches.  */
-      add_filename_to_list (filename, data->text, data->word,
-			    data->list, data->list_used, data->list_alloced);
+      add_filename_to_list (filename, data->text, data->word, data->list);
     }
   else
     {
       const char *base_name = lbasename (filename);
 
       if (base_name != filename
-	  && !filename_seen (base_name, 1, data->first)
-#if HAVE_DOS_BASED_FILE_SYSTEM
-	  && strncasecmp (base_name, data->text, data->text_len) == 0
-#else
-	  && strncmp (base_name, data->text, data->text_len) == 0
-#endif
-	  )
-	add_filename_to_list (base_name, data->text, data->word,
-			      data->list, data->list_used, data->list_alloced);
+	  && !filename_seen (data->filename_seen_cache, base_name, 1)
+	  && filename_ncmp (base_name, data->text, data->text_len) == 0)
+	add_filename_to_list (base_name, data->text, data->word, data->list);
     }
 }
 
-/* Return a NULL terminated array of all source files whose names
-   begin with matching TEXT.  The file names are looked up in the
-   symbol tables of this program.  If the answer is no matchess, then
-   the return value is an array which contains only a NULL pointer.  */
+/* Return a vector of all source files whose names begin with matching
+   TEXT.  The file names are looked up in the symbol tables of this
+   program.  If the answer is no matchess, then the return value is
+   NULL.  */
 
-char **
+VEC (char_ptr) *
 make_source_files_completion_list (char *text, char *word)
 {
   struct symtab *s;
   struct objfile *objfile;
-  int first = 1;
-  int list_alloced = 1;
-  int list_used = 0;
   size_t text_len = strlen (text);
-  char **list = (char **) xmalloc (list_alloced * sizeof (char *));
+  VEC (char_ptr) *list = NULL;
   const char *base_name;
   struct add_partial_filename_data datum;
-
-  list[0] = NULL;
+  struct filename_seen_cache *filename_seen_cache;
+  struct cleanup *back_to, *cache_cleanup;
 
   if (!have_full_symbols () && !have_partial_symbols ())
     return list;
+
+  back_to = make_cleanup (do_free_completion_list, &list);
+
+  filename_seen_cache = create_filename_seen_cache ();
+  cache_cleanup = make_cleanup (delete_filename_seen_cache,
+				filename_seen_cache);
 
   ALL_SYMTABS (objfile, s)
     {
       if (not_interesting_fname (s->filename))
 	continue;
-      if (!filename_seen (s->filename, 1, &first)
-#if HAVE_DOS_BASED_FILE_SYSTEM
-	  && strncasecmp (s->filename, text, text_len) == 0
-#else
-	  && strncmp (s->filename, text, text_len) == 0
-#endif
-	  )
+      if (!filename_seen (filename_seen_cache, s->filename, 1)
+	  && filename_ncmp (s->filename, text, text_len) == 0)
 	{
 	  /* This file matches for a completion; add it to the current
 	     list of matches.  */
-	  add_filename_to_list (s->filename, text, word,
-				&list, &list_used, &list_alloced);
+	  add_filename_to_list (s->filename, text, word, &list);
 	}
       else
 	{
@@ -4109,26 +4661,22 @@ make_source_files_completion_list (char *text, char *word)
 	     command do when they parse file names.  */
 	  base_name = lbasename (s->filename);
 	  if (base_name != s->filename
-	      && !filename_seen (base_name, 1, &first)
-#if HAVE_DOS_BASED_FILE_SYSTEM
-	      && strncasecmp (base_name, text, text_len) == 0
-#else
-	      && strncmp (base_name, text, text_len) == 0
-#endif
-	      )
-	    add_filename_to_list (base_name, text, word,
-				  &list, &list_used, &list_alloced);
+	      && !filename_seen (filename_seen_cache, base_name, 1)
+	      && filename_ncmp (base_name, text, text_len) == 0)
+	    add_filename_to_list (base_name, text, word, &list);
 	}
     }
 
-  datum.first = &first;
+  datum.filename_seen_cache = filename_seen_cache;
   datum.text = text;
   datum.word = word;
   datum.text_len = text_len;
   datum.list = &list;
-  datum.list_used = &list_used;
-  datum.list_alloced = &list_alloced;
-  map_partial_symbol_filenames (maybe_add_partial_symtab_filename, &datum);
+  map_partial_symbol_filenames (maybe_add_partial_symtab_filename, &datum,
+				0 /*need_fullname*/);
+
+  do_cleanups (cache_cleanup);
+  discard_cleanups (back_to);
 
   return list;
 }
@@ -4138,8 +4686,7 @@ make_source_files_completion_list (char *text, char *word)
    Returns 1 if PC *might* be in prologue, 0 if definately *not* in prologue.
 
    If non-zero, func_start is where we think the prologue starts, possibly
-   by previous examination of symbol table information.
- */
+   by previous examination of symbol table information.  */
 
 int
 in_prologue (struct gdbarch *gdbarch, CORE_ADDR pc, CORE_ADDR func_start)
@@ -4221,8 +4768,8 @@ in_prologue (struct gdbarch *gdbarch, CORE_ADDR pc, CORE_ADDR func_start)
    The functions end point and an increasing SAL line are used as
    indicators of the prologue's endpoint.
 
-   This code is based on the function refine_prologue_limit (versions
-   found in both ia64 and ppc).  */
+   This code is based on the function refine_prologue_limit
+   (found in ia64).  */
 
 CORE_ADDR
 skip_prologue_using_sal (struct gdbarch *gdbarch, CORE_ADDR func_addr)
@@ -4239,7 +4786,7 @@ skip_prologue_using_sal (struct gdbarch *gdbarch, CORE_ADDR func_addr)
   prologue_sal = find_pc_line (start_pc, 0);
   if (prologue_sal.line != 0)
     {
-      /* For langauges other than assembly, treat two consecutive line
+      /* For languages other than assembly, treat two consecutive line
 	 entries at the same address as a zero-instruction prologue.
 	 The GNU assembler emits separate line notes for each instruction
 	 in a multi-instruction macro, but compilers generally will not
@@ -4263,7 +4810,7 @@ skip_prologue_using_sal (struct gdbarch *gdbarch, CORE_ADDR func_addr)
 
       /* If there is only one sal that covers the entire function,
 	 then it is probably a single line function, like
-	 "foo(){}". */
+	 "foo(){}".  */
       if (prologue_sal.end >= end_pc)
 	return 0;
 
@@ -4303,7 +4850,7 @@ skip_prologue_using_sal (struct gdbarch *gdbarch, CORE_ADDR func_addr)
 	     corresponding line number is less the first one that we
 	     found for the function.  This is more conservative then
 	     refine_prologue_limit which scans a large number of SALs
-	     looking for any in the prologue */
+	     looking for any in the prologue.  */
 	  prologue_sal = sal;
 	}
     }
@@ -4317,30 +4864,9 @@ skip_prologue_using_sal (struct gdbarch *gdbarch, CORE_ADDR func_addr)
     return prologue_sal.pc;
 }
 
-struct symtabs_and_lines
-decode_line_spec (char *string, int funfirstline)
-{
-  struct symtabs_and_lines sals;
-  struct symtab_and_line cursal;
-
-  if (string == 0)
-    error (_("Empty line specification."));
-
-  /* We use whatever is set as the current source line. We do not try
-     and get a default  or it will recursively call us! */
-  cursal = get_current_source_symtab_and_line ();
-
-  sals = decode_line_1 (&string, funfirstline,
-			cursal.symtab, cursal.line,
-			(char ***) NULL, NULL);
-
-  if (*string)
-    error (_("Junk at end of line specification: %s"), string);
-  return sals;
-}
-
 /* Track MAIN */
 static char *name_of_main;
+enum language language_of_main = language_unknown;
 
 void
 set_main_name (const char *name)
@@ -4349,10 +4875,12 @@ set_main_name (const char *name)
     {
       xfree (name_of_main);
       name_of_main = NULL;
+      language_of_main = language_unknown;
     }
   if (name != NULL)
     {
       name_of_main = xstrdup (name);
+      language_of_main = language_unknown;
     }
 }
 
@@ -4371,16 +4899,23 @@ find_main_name (void)
      name.  This would allow us to remove this hard-coded call to
      an Ada function.  It is not clear that this is a better approach
      at this point, because all methods need to be written in a way
-     such that false positives never be returned. For instance, it is
+     such that false positives never be returned.  For instance, it is
      important that a method does not return a wrong name for the main
      procedure if the main procedure is actually written in a different
      language.  It is easy to guaranty this with Ada, since we use a
      special symbol generated only when the main in Ada to find the name
-     of the main procedure. It is difficult however to see how this can
+     of the main procedure.  It is difficult however to see how this can
      be guarantied for languages such as C, for instance.  This suggests
      that order of call for these methods becomes important, which means
      a more complicated approach.  */
   new_main_name = ada_main_name ();
+  if (new_main_name != NULL)
+    {
+      set_main_name (new_main_name);
+      return;
+    }
+
+  new_main_name = go_main_name ();
   if (new_main_name != NULL)
     {
       set_main_name (new_main_name);
@@ -4415,212 +4950,6 @@ symtab_observer_executable_changed (void)
 {
   /* NAME_OF_MAIN may no longer be the same, so reset it for now.  */
   set_main_name (NULL);
-}
-
-/* Helper to expand_line_sal below.  Appends new sal to SAL,
-   initializing it from SYMTAB, LINENO and PC.  */
-static void
-append_expanded_sal (struct symtabs_and_lines *sal,
-		     struct program_space *pspace,
-		     struct symtab *symtab,
-		     int lineno, CORE_ADDR pc)
-{
-  sal->sals = xrealloc (sal->sals,
-			sizeof (sal->sals[0])
-			* (sal->nelts + 1));
-  init_sal (sal->sals + sal->nelts);
-  sal->sals[sal->nelts].pspace = pspace;
-  sal->sals[sal->nelts].symtab = symtab;
-  sal->sals[sal->nelts].section = NULL;
-  sal->sals[sal->nelts].end = 0;
-  sal->sals[sal->nelts].line = lineno;
-  sal->sals[sal->nelts].pc = pc;
-  ++sal->nelts;
-}
-
-/* Helper to expand_line_sal below.  Search in the symtabs for any
-   linetable entry that exactly matches FULLNAME and LINENO and append
-   them to RET.  If FULLNAME is NULL or if a symtab has no full name,
-   use FILENAME and LINENO instead.  If there is at least one match,
-   return 1; otherwise, return 0, and return the best choice in BEST_ITEM
-   and BEST_SYMTAB.  */
-
-static int
-append_exact_match_to_sals (char *filename, char *fullname, int lineno,
-			    struct symtabs_and_lines *ret,
-			    struct linetable_entry **best_item,
-			    struct symtab **best_symtab)
-{
-  struct program_space *pspace;
-  struct objfile *objfile;
-  struct symtab *symtab;
-  int exact = 0;
-  int j;
-  *best_item = 0;
-  *best_symtab = 0;
-
-  ALL_PSPACES (pspace)
-    ALL_PSPACE_SYMTABS (pspace, objfile, symtab)
-    {
-      if (FILENAME_CMP (filename, symtab->filename) == 0)
-	{
-	  struct linetable *l;
-	  int len;
-
-	  if (fullname != NULL
-	      && symtab_to_fullname (symtab) != NULL
-    	      && FILENAME_CMP (fullname, symtab->fullname) != 0)
-    	    continue;		  
-	  l = LINETABLE (symtab);
-	  if (!l)
-	    continue;
-	  len = l->nitems;
-
-	  for (j = 0; j < len; j++)
-	    {
-	      struct linetable_entry *item = &(l->item[j]);
-
-	      if (item->line == lineno)
-		{
-		  exact = 1;
-		  append_expanded_sal (ret, objfile->pspace,
-				       symtab, lineno, item->pc);
-		}
-	      else if (!exact && item->line > lineno
-		       && (*best_item == NULL
-			   || item->line < (*best_item)->line))
-		{
-		  *best_item = item;
-		  *best_symtab = symtab;
-		}
-	    }
-	}
-    }
-  return exact;
-}
-
-/* Compute a set of all sals in all program spaces that correspond to
-   same file and line as SAL and return those.  If there are several
-   sals that belong to the same block, only one sal for the block is
-   included in results.  */
-
-struct symtabs_and_lines
-expand_line_sal (struct symtab_and_line sal)
-{
-  struct symtabs_and_lines ret;
-  int i, j;
-  struct objfile *objfile;
-  int lineno;
-  int deleted = 0;
-  struct block **blocks = NULL;
-  int *filter;
-  struct cleanup *old_chain;
-
-  ret.nelts = 0;
-  ret.sals = NULL;
-
-  /* Only expand sals that represent file.c:line.  */
-  if (sal.symtab == NULL || sal.line == 0 || sal.pc != 0)
-    {
-      ret.sals = xmalloc (sizeof (struct symtab_and_line));
-      ret.sals[0] = sal;
-      ret.nelts = 1;
-      return ret;
-    }
-  else
-    {
-      struct program_space *pspace;
-      struct linetable_entry *best_item = 0;
-      struct symtab *best_symtab = 0;
-      int exact = 0;
-      char *match_filename;
-
-      lineno = sal.line;
-      match_filename = sal.symtab->filename;
-
-      /* We need to find all symtabs for a file which name
-	 is described by sal.  We cannot just directly
-	 iterate over symtabs, since a symtab might not be
-	 yet created.  We also cannot iterate over psymtabs,
-	 calling PSYMTAB_TO_SYMTAB and working on that symtab,
-	 since PSYMTAB_TO_SYMTAB will return NULL for psymtab
-	 corresponding to an included file.  Therefore, we do
-	 first pass over psymtabs, reading in those with
-	 the right name.  Then, we iterate over symtabs, knowing
-	 that all symtabs we're interested in are loaded.  */
-
-      old_chain = save_current_program_space ();
-      ALL_PSPACES (pspace)
-      {
-	set_current_program_space (pspace);
-	ALL_PSPACE_OBJFILES (pspace, objfile)
-	{
-	  if (objfile->sf)
-	    objfile->sf->qf->expand_symtabs_with_filename (objfile,
-							   sal.symtab->filename);
-	}
-      }
-      do_cleanups (old_chain);
-
-      /* Now search the symtab for exact matches and append them.  If
-	 none is found, append the best_item and all its exact
-	 matches.  */
-      symtab_to_fullname (sal.symtab);
-      exact = append_exact_match_to_sals (sal.symtab->filename,
-					  sal.symtab->fullname, lineno,
-					  &ret, &best_item, &best_symtab);
-      if (!exact && best_item)
-	append_exact_match_to_sals (best_symtab->filename,
-				    best_symtab->fullname, best_item->line,
-				    &ret, &best_item, &best_symtab);
-    }
-
-  /* For optimized code, compiler can scatter one source line accross
-     disjoint ranges of PC values, even when no duplicate functions
-     or inline functions are involved.  For example, 'for (;;)' inside
-     non-template non-inline non-ctor-or-dtor function can result
-     in two PC ranges.  In this case, we don't want to set breakpoint
-     on first PC of each range.  To filter such cases, we use containing
-     blocks -- for each PC found above we see if there are other PCs
-     that are in the same block.  If yes, the other PCs are filtered out.  */
-
-  old_chain = save_current_program_space ();
-  filter = alloca (ret.nelts * sizeof (int));
-  blocks = alloca (ret.nelts * sizeof (struct block *));
-  for (i = 0; i < ret.nelts; ++i)
-    {
-      set_current_program_space (ret.sals[i].pspace);
-
-      filter[i] = 1;
-      blocks[i] = block_for_pc_sect (ret.sals[i].pc, ret.sals[i].section);
-
-    }
-  do_cleanups (old_chain);
-
-  for (i = 0; i < ret.nelts; ++i)
-    if (blocks[i] != NULL)
-      for (j = i+1; j < ret.nelts; ++j)
-	if (blocks[j] == blocks[i])
-	  {
-	    filter[j] = 0;
-	    ++deleted;
-	    break;
-	  }
-
-  {
-    struct symtab_and_line *final =
-      xmalloc (sizeof (struct symtab_and_line) * (ret.nelts-deleted));
-
-    for (i = 0, j = 0; i < ret.nelts; ++i)
-      if (filter[i])
-	final[j++] = ret.sals[i];
-
-    ret.nelts -= deleted;
-    xfree (ret.sals);
-    ret.sals = final;
-  }
-
-  return ret;
 }
 
 /* Return 1 if the supplied producer string matches the ARM RealView
@@ -4694,6 +5023,28 @@ in an expression."), _("\
 Show how the debugger handles ambiguities in expressions."), _("\
 Valid values are \"ask\", \"all\", \"cancel\", and the default is \"all\"."),
                         NULL, NULL, &setlist, &showlist);
+
+  add_setshow_boolean_cmd ("basenames-may-differ", class_obscure,
+			   &basenames_may_differ, _("\
+Set whether a source file may have multiple base names."), _("\
+Show whether a source file may have multiple base names."), _("\
+(A \"base name\" is the name of a file with the directory part removed.\n\
+Example: The base name of \"/home/user/hello.c\" is \"hello.c\".)\n\
+If set, GDB will canonicalize file names (e.g., expand symlinks)\n\
+before comparing them.  Canonicalization is an expensive operation,\n\
+but it allows the same file be known by more than one base name.\n\
+If not set (the default), all source files are assumed to have just\n\
+one base name, and gdb will do file name comparisons more efficiently."),
+			   NULL, NULL,
+			   &setlist, &showlist);
+
+  add_setshow_boolean_cmd ("symtab-create", no_class, &symtab_create_debug,
+			   _("Set debugging of symbol table creation."),
+			   _("Show debugging of symbol table creation."), _("\
+When enabled, debugging messages are printed when building symbol tables."),
+			    NULL,
+			    NULL,
+			    &setdebuglist, &showdebuglist);
 
   observer_attach_executable_changed (symtab_observer_executable_changed);
 }

@@ -165,10 +165,13 @@ valpy_new (PyTypeObject *subtype, PyObject *args, PyObject *keywords)
 void
 preserve_python_values (struct objfile *objfile, htab_t copied_types)
 {
-  value_object *iter;
+  if (python_available_at_runtime) {
 
-  for (iter = values_in_python; iter; iter = iter->next)
-    preserve_one_value (iter->value, objfile, copied_types);
+    value_object *iter;
+
+    for (iter = values_in_python; iter; iter = iter->next)
+      preserve_one_value (iter->value, objfile, copied_types);
+  }
 }
 
 /* Given a value of a pointer type, apply the C unary * operator to it.  */

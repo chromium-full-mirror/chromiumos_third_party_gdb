@@ -682,6 +682,8 @@ apply_val_pretty_printer (struct type *type, const gdb_byte *valaddr,
 			  const struct value_print_options *options,
 			  const struct language_defn *language)
 {
+  if (python_available_at_runtime == 0)
+    return 0;
   struct gdbarch *gdbarch = get_type_arch (type);
   PyObject *printer = NULL;
   PyObject *val_obj = NULL;

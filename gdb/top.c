@@ -1735,6 +1735,7 @@ gdb_init (char *argv0)
      installed.  For example "info pretty-printer" needs the "info"
      prefix to be installed.  Keep things simple and just do final
      python initialization here.  */
-  finish_python_initialization ();
+  if (python_available_at_runtime)
+    finish_python_initialization ();
 #endif
 }

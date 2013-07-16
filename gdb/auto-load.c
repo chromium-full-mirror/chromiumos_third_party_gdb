@@ -39,6 +39,9 @@
 #include "fnmatch.h"
 #include "top.h"
 
+#include <sys/stat.h>
+
+
 /* The suffix of per-objfile scripts to auto-load as non-Python command files.
    E.g. When the program loads libfoo.so, look for libfoo-gdb.gdb.  */
 #define GDB_AUTO_FILE_NAME "-gdb.gdb"
@@ -59,6 +62,19 @@ show_debug_auto_load (struct ui_file *file, int from_tty,
 			    "of 'set auto-load ...' is %s.\n"),
 		    value);
 }
+
+int python_available_at_runtime = 0;
+
+static void
+check_python_status ()
+{
+  char * program_name = concat (ldirname (python_libdir), SLASH_STRING, "bin",
+                                 SLASH_STRING, "python", NULL);
+  struct stat sb;
+  if (stat(program_name, &sb) == 0)
+    python_available_at_runtime = 1;
+}
+
 
 /* User-settable option to enable/disable auto-loading of GDB_AUTO_FILE_NAME
    scripts:
@@ -1199,6 +1215,8 @@ _initialize_auto_load (void)
 
   observer_attach_new_objfile (auto_load_new_objfile);
 
+  check_python_status ();
+
   add_setshow_boolean_cmd ("gdb-scripts", class_support,
 			   &auto_load_gdb_scripts, _("\
 Enable or disable auto-loading of canned sequences of commands scripts."), _("\
@@ -1235,6 +1253,7 @@ Usage: info auto-load local-gdbinit"),
 	   auto_load_info_cmdlist_get ());
 
   auto_load_dir = xstrdup (AUTO_LOAD_DIR);
+  if (python_available_at_runtime) {
   scripts_directory_help = xstrprintf (
 #ifdef HAVE_PYTHON
 				       _("\
@@ -1256,6 +1275,22 @@ having 'set auto-load ... off'.\n\
 Directories listed here need to be present also \
 in the 'set auto-load safe-path'\n\
 option."));
+  }
+  else {
+    scripts_directory_help = xstrprintf (
+     _("\
+     Automatically loaded GDB scripts (named OBJFILE%s) are located in one\n\
+     of the directories listed by this option.\n\
+     %s"),
+      GDB_AUTO_FILE_NAME,
+                                             _("\
+					     This option is ignored for the kinds of scripts \
+					     having 'set auto-load ... off'.\n\
+					     Directories listed here need to be present also \
+					     in the 'set auto-load safe-path'\n\
+					     option."));
+
+  }
   add_setshow_optional_filename_cmd ("scripts-directory", class_support,
 				     &auto_load_dir, _("\
 Set the list of directories from which to load auto-loaded scripts."), _("\

@@ -933,12 +933,14 @@ varobj_get_display_hint (struct varobj *var)
   char *result = NULL;
 
 #if HAVE_PYTHON
-  struct cleanup *back_to = varobj_ensure_python_env (var);
+  if (python_available_at_runtime) {
+    struct cleanup *back_to = varobj_ensure_python_env (var);
 
-  if (var->pretty_printer)
-    result = gdbpy_get_display_hint (var->pretty_printer);
+    if (var->pretty_printer)
+      result = gdbpy_get_display_hint (var->pretty_printer);
 
-  do_cleanups (back_to);
+    do_cleanups (back_to);
+  }
 #endif
 
   return result;
@@ -1088,6 +1090,8 @@ update_dynamic_varobj_children (struct varobj *var,
   struct cleanup *back_to;
   PyObject *children;
   int i;
+  if (python_available_at_runtime == 0)
+    gdb_assert (0 && "should never be called if Python is not enabled");
   PyObject *printer = var->pretty_printer;
 
   back_to = varobj_ensure_python_env (var);
@@ -1619,6 +1623,8 @@ static void
 install_new_value_visualizer (struct varobj *var)
 {
 #if HAVE_PYTHON
+  if (python_available_at_runtime == 0)
+    return;
   /* If the constructor is None, then we want the raw value.  If VAR
      does not have a value, just skip this.  */
   if (var->constructor != Py_None && var->value)

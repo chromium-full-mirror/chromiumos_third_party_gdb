@@ -1215,6 +1215,9 @@ message == an error message without a stack will be printed."),
 			&user_set_python_list,
 			&user_show_python_list);
 
+  if (python_available_at_runtime == 0)
+      return;
+
 #ifdef HAVE_PYTHON
 #ifdef WITH_PYTHON_PATH
   /* Work around problem where python gets confused about where it is,

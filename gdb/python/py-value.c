@@ -167,6 +167,9 @@ preserve_python_values (struct objfile *objfile, htab_t copied_types)
 {
   value_object *iter;
 
+  if (!python_available ())
+    return;
+
   for (iter = values_in_python; iter; iter = iter->next)
     preserve_one_value (iter->value, objfile, copied_types);
 }

@@ -1167,4 +1167,9 @@ enum block_enum
   FIRST_LOCAL_BLOCK = 2
 };
 
+
+#ifdef HAVE_PYTHON
+extern int python_available (void);
+#endif
+
 #endif /* #ifndef DEFS_H */

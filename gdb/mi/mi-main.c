@@ -1756,7 +1756,8 @@ mi_cmd_list_features (char *command, char **argv, int argc)
       ui_out_field_string (uiout, NULL, "ada-task-info");
       
 #if HAVE_PYTHON
-      ui_out_field_string (uiout, NULL, "python");
+      if (python_available ())
+        ui_out_field_string (uiout, NULL, "python");
 #endif
       
       do_cleanups (cleanup);

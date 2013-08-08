@@ -803,5 +803,8 @@ enum block_enum
 };
 
 #include "utils.h"
+#ifdef HAVE_PYTHON
+extern int python_available (void);
+#endif
 
 #endif /* #ifndef DEFS_H */

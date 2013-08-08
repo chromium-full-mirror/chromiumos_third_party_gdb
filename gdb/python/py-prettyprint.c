@@ -704,6 +704,9 @@ apply_val_pretty_printer (struct type *type, const gdb_byte *valaddr,
   int result = 0;
   enum string_repr_result print_result;
 
+  if (!python_available ())
+    return 0;
+
   /* No pretty-printer support for unavailable values.  */
   if (!value_bytes_available (val, embedded_offset, TYPE_LENGTH (type)))
     return 0;

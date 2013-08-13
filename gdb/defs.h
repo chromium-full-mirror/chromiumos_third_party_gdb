@@ -1167,5 +1167,4 @@ enum block_enum
   FIRST_LOCAL_BLOCK = 2
 };
 
-extern int python_available_at_runtime;
 #endif /* #ifndef DEFS_H */

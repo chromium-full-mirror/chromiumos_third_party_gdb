@@ -224,7 +224,7 @@ auto_load_section_scripts (struct objfile *objfile, const char *section_name)
 void
 gdbpy_load_auto_scripts_for_objfile (struct objfile *objfile)
 {
-  if (python_available_at_runtime && auto_load_python_scripts)
+  if (auto_load_python_scripts)
     {
       auto_load_objfile_script (objfile, &script_language_python);
       auto_load_section_scripts (objfile, GDBPY_AUTO_SECTION_NAME);

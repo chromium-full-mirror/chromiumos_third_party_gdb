@@ -1,8 +1,6 @@
 /* PPC GNU/Linux native support.
 
-   Copyright (C) 1988, 1989, 1991, 1992, 1994, 1996, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1988-2013 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -549,7 +547,7 @@ fetch_register (struct regcache *regcache, int tid, int regno)
   CORE_ADDR regaddr = ppc_register_u_addr (gdbarch, regno);
   int bytes_transferred;
   unsigned int offset;         /* Offset of registers within the u area.  */
-  char buf[MAX_REGISTER_SIZE];
+  gdb_byte buf[MAX_REGISTER_SIZE];
 
   if (altivec_register_p (gdbarch, regno))
     {
@@ -594,17 +592,19 @@ fetch_register (struct regcache *regcache, int tid, int regno)
        bytes_transferred < register_size (gdbarch, regno);
        bytes_transferred += sizeof (long))
     {
+      long l;
+
       errno = 0;
-      *(long *) &buf[bytes_transferred]
-        = ptrace (PTRACE_PEEKUSER, tid, (PTRACE_TYPE_ARG3) regaddr, 0);
+      l = ptrace (PTRACE_PEEKUSER, tid, (PTRACE_TYPE_ARG3) regaddr, 0);
       regaddr += sizeof (long);
       if (errno != 0)
 	{
           char message[128];
-	  sprintf (message, "reading register %s (#%d)", 
-		   gdbarch_register_name (gdbarch, regno), regno);
+	  xsnprintf (message, sizeof (message), "reading register %s (#%d)",
+		     gdbarch_register_name (gdbarch, regno), regno);
 	  perror_with_name (message);
 	}
+      memcpy (&buf[bytes_transferred], &l, sizeof (l));
     }
 
   /* Now supply the register.  Keep in mind that the regcache's idea
@@ -1034,7 +1034,7 @@ store_register (const struct regcache *regcache, int tid, int regno)
   CORE_ADDR regaddr = ppc_register_u_addr (gdbarch, regno);
   int i;
   size_t bytes_to_transfer;
-  char buf[MAX_REGISTER_SIZE];
+  gdb_byte buf[MAX_REGISTER_SIZE];
 
   if (altivec_register_p (gdbarch, regno))
     {
@@ -1074,9 +1074,11 @@ store_register (const struct regcache *regcache, int tid, int regno)
 
   for (i = 0; i < bytes_to_transfer; i += sizeof (long))
     {
+      long l;
+
+      memcpy (&l, &buf[i], sizeof (l));
       errno = 0;
-      ptrace (PTRACE_POKEUSER, tid, (PTRACE_TYPE_ARG3) regaddr,
-	      *(long *) &buf[i]);
+      ptrace (PTRACE_POKEUSER, tid, (PTRACE_TYPE_ARG3) regaddr, l);
       regaddr += sizeof (long);
 
       if (errno == EIO 
@@ -1092,8 +1094,8 @@ store_register (const struct regcache *regcache, int tid, int regno)
       if (errno != 0)
 	{
           char message[128];
-	  sprintf (message, "writing register %s (#%d)", 
-		   gdbarch_register_name (gdbarch, regno), regno);
+	  xsnprintf (message, sizeof (message), "writing register %s (#%d)",
+		     gdbarch_register_name (gdbarch, regno), regno);
 	  perror_with_name (message);
 	}
     }
@@ -1348,7 +1350,8 @@ store_ppc_registers (const struct regcache *regcache, int tid)
 }
 
 /* Fetch the AT_HWCAP entry from the aux vector.  */
-unsigned long ppc_linux_get_hwcap (void)
+static unsigned long
+ppc_linux_get_hwcap (void)
 {
   CORE_ADDR field;
 
@@ -1417,17 +1420,20 @@ have_ptrace_booke_interface (void)
       /* Check for kernel support for BOOKE debug registers.  */
       if (ptrace (PPC_PTRACE_GETHWDBGINFO, tid, 0, &booke_debug_info) >= 0)
 	{
-	  have_ptrace_booke_interface = 1;
-	  max_slots_number = booke_debug_info.num_instruction_bps
-	    + booke_debug_info.num_data_bps
-	    + booke_debug_info.num_condition_regs;
+	  /* Check whether ptrace BOOKE interface is functional and
+	     provides any supported feature.  */
+	  if (booke_debug_info.features != 0)
+	    {
+	      have_ptrace_booke_interface = 1;
+	      max_slots_number = booke_debug_info.num_instruction_bps
+	        + booke_debug_info.num_data_bps
+	        + booke_debug_info.num_condition_regs;
+	      return have_ptrace_booke_interface;
+	    }
 	}
-      else
-	{
-	  /* Old school interface and no BOOKE debug registers support.  */
-	  have_ptrace_booke_interface = 0;
-	  memset (&booke_debug_info, 0, sizeof (struct ppc_debug_info));
-	}
+      /* Old school interface and no BOOKE debug registers support.  */
+      have_ptrace_booke_interface = 0;
+      memset (&booke_debug_info, 0, sizeof (struct ppc_debug_info));
     }
 
   return have_ptrace_booke_interface;
@@ -1457,7 +1463,7 @@ ppc_linux_can_use_hw_breakpoint (int type, int cnt, int ot)
   if (type == bp_hardware_watchpoint || type == bp_read_watchpoint
       || type == bp_access_watchpoint || type == bp_watchpoint)
     {
-      if (cnt > total_hw_wp)
+      if (cnt + ot > total_hw_wp)
 	return -1;
     }
   else if (type == bp_hardware_breakpoint)
@@ -1654,7 +1660,6 @@ static int
 ppc_linux_insert_hw_breakpoint (struct gdbarch *gdbarch,
 				  struct bp_target_info *bp_tgt)
 {
-  ptid_t ptid;
   struct lwp_info *lp;
   struct ppc_hw_breakpoint p;
 
@@ -1681,8 +1686,8 @@ ppc_linux_insert_hw_breakpoint (struct gdbarch *gdbarch,
       p.addr2 = 0;
     }
 
-  ALL_LWPS (lp, ptid)
-    booke_insert_point (&p, TIDGET (ptid));
+  ALL_LWPS (lp)
+    booke_insert_point (&p, TIDGET (lp->ptid));
 
   return 0;
 }
@@ -1691,7 +1696,6 @@ static int
 ppc_linux_remove_hw_breakpoint (struct gdbarch *gdbarch,
 				  struct bp_target_info *bp_tgt)
 {
-  ptid_t ptid;
   struct lwp_info *lp;
   struct ppc_hw_breakpoint p;
 
@@ -1718,8 +1722,8 @@ ppc_linux_remove_hw_breakpoint (struct gdbarch *gdbarch,
       p.addr2 = 0;
     }
 
-  ALL_LWPS (lp, ptid)
-    booke_remove_point (&p, TIDGET (ptid));
+  ALL_LWPS (lp)
+    booke_remove_point (&p, TIDGET (lp->ptid));
 
   return 0;
 }
@@ -1748,7 +1752,6 @@ static int
 ppc_linux_insert_mask_watchpoint (struct target_ops *ops, CORE_ADDR addr,
 				  CORE_ADDR mask, int rw)
 {
-  ptid_t ptid;
   struct lwp_info *lp;
   struct ppc_hw_breakpoint p;
 
@@ -1762,8 +1765,8 @@ ppc_linux_insert_mask_watchpoint (struct target_ops *ops, CORE_ADDR addr,
   p.addr2 = mask;
   p.condition_value = 0;
 
-  ALL_LWPS (lp, ptid)
-    booke_insert_point (&p, TIDGET (ptid));
+  ALL_LWPS (lp)
+    booke_insert_point (&p, TIDGET (lp->ptid));
 
   return 0;
 }
@@ -1777,7 +1780,6 @@ static int
 ppc_linux_remove_mask_watchpoint (struct target_ops *ops, CORE_ADDR addr,
 				  CORE_ADDR mask, int rw)
 {
-  ptid_t ptid;
   struct lwp_info *lp;
   struct ppc_hw_breakpoint p;
 
@@ -1791,8 +1793,8 @@ ppc_linux_remove_mask_watchpoint (struct target_ops *ops, CORE_ADDR addr,
   p.addr2 = mask;
   p.condition_value = 0;
 
-  ALL_LWPS (lp, ptid)
-    booke_remove_point (&p, TIDGET (ptid));
+  ALL_LWPS (lp)
+    booke_remove_point (&p, TIDGET (lp->ptid));
 
   return 0;
 }
@@ -2014,7 +2016,8 @@ create_watchpoint_request (struct ppc_hw_breakpoint *p, CORE_ADDR addr,
 			   int len, int rw, struct expression *cond,
 			   int insert)
 {
-  if (len == 1)
+  if (len == 1
+      || !(booke_debug_info.features & PPC_DEBUG_FEATURE_DATA_BP_RANGE))
     {
       int use_condition;
       CORE_ADDR data_value;
@@ -2059,7 +2062,6 @@ ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 			     struct expression *cond)
 {
   struct lwp_info *lp;
-  ptid_t ptid;
   int ret = -1;
 
   if (have_ptrace_booke_interface ())
@@ -2068,8 +2070,8 @@ ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 
       create_watchpoint_request (&p, addr, len, rw, cond, 1);
 
-      ALL_LWPS (lp, ptid)
-	booke_insert_point (&p, TIDGET (ptid));
+      ALL_LWPS (lp)
+	booke_insert_point (&p, TIDGET (lp->ptid));
 
       ret = 0;
     }
@@ -2112,8 +2114,8 @@ ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 
       saved_dabr_value = dabr_value;
 
-      ALL_LWPS (lp, ptid)
-	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (ptid), 0,
+      ALL_LWPS (lp)
+	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (lp->ptid), 0,
 		    saved_dabr_value) < 0)
 	  return -1;
 
@@ -2128,7 +2130,6 @@ ppc_linux_remove_watchpoint (CORE_ADDR addr, int len, int rw,
 			     struct expression *cond)
 {
   struct lwp_info *lp;
-  ptid_t ptid;
   int ret = -1;
 
   if (have_ptrace_booke_interface ())
@@ -2137,16 +2138,16 @@ ppc_linux_remove_watchpoint (CORE_ADDR addr, int len, int rw,
 
       create_watchpoint_request (&p, addr, len, rw, cond, 0);
 
-      ALL_LWPS (lp, ptid)
-	booke_remove_point (&p, TIDGET (ptid));
+      ALL_LWPS (lp)
+	booke_remove_point (&p, TIDGET (lp->ptid));
 
       ret = 0;
     }
   else
     {
       saved_dabr_value = 0;
-      ALL_LWPS (lp, ptid)
-	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (ptid), 0,
+      ALL_LWPS (lp)
+	if (ptrace (PTRACE_SET_DEBUGREG, TIDGET (lp->ptid), 0,
 		    saved_dabr_value) < 0)
 	  return -1;
 
@@ -2157,9 +2158,9 @@ ppc_linux_remove_watchpoint (CORE_ADDR addr, int len, int rw,
 }
 
 static void
-ppc_linux_new_thread (ptid_t ptid)
+ppc_linux_new_thread (struct lwp_info *lp)
 {
-  int tid = TIDGET (ptid);
+  int tid = TIDGET (lp->ptid);
 
   if (have_ptrace_booke_interface ())
     {
@@ -2219,12 +2220,13 @@ ppc_linux_thread_exit (struct thread_info *tp, int silent)
 static int
 ppc_linux_stopped_data_address (struct target_ops *target, CORE_ADDR *addr_p)
 {
-  struct siginfo *siginfo_p;
+  siginfo_t siginfo;
 
-  siginfo_p = linux_nat_get_siginfo (inferior_ptid);
+  if (!linux_nat_get_siginfo (inferior_ptid, &siginfo))
+    return 0;
 
-  if (siginfo_p->si_signo != SIGTRAP
-      || (siginfo_p->si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
+  if (siginfo.si_signo != SIGTRAP
+      || (siginfo.si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
     return 0;
 
   if (have_ptrace_booke_interface ())
@@ -2233,7 +2235,7 @@ ppc_linux_stopped_data_address (struct target_ops *target, CORE_ADDR *addr_p)
       struct thread_points *t;
       struct hw_break_tuple *hw_breaks;
       /* The index (or slot) of the *point is passed in the si_errno field.  */
-      int slot = siginfo_p->si_errno;
+      int slot = siginfo.si_errno;
 
       t = booke_find_thread_points_by_tid (TIDGET (inferior_ptid), 0);
 
@@ -2250,7 +2252,7 @@ ppc_linux_stopped_data_address (struct target_ops *target, CORE_ADDR *addr_p)
 	}
     }
 
-  *addr_p = (CORE_ADDR) (uintptr_t) siginfo_p->si_addr;
+  *addr_p = (CORE_ADDR) (uintptr_t) siginfo.si_addr;
   return 1;
 }
 
@@ -2391,7 +2393,7 @@ ppc_linux_auxv_parse (struct target_ops *ops, gdb_byte **readptr,
                       gdb_byte *endptr, CORE_ADDR *typep, CORE_ADDR *valp)
 {
   int sizeof_auxv_field = ppc_linux_target_wordsize ();
-  enum bfd_endian byte_order = gdbarch_byte_order (target_gdbarch);
+  enum bfd_endian byte_order = gdbarch_byte_order (target_gdbarch ());
   gdb_byte *ptr = *readptr;
 
   if (endptr == ptr)

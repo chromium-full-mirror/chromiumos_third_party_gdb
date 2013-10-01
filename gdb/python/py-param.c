@@ -1,6 +1,6 @@
 /* GDB parameters implemented in Python
 
-   Copyright (C) 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 2008-2013 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -102,7 +102,11 @@ static PyObject *
 get_attr (PyObject *obj, PyObject *attr_name)
 {
   if (PyString_Check (attr_name)
+#ifdef IS_PY3K
+      && ! PyUnicode_CompareWithASCIIString (attr_name, "value"))
+#else
       && ! strcmp (PyString_AsString (attr_name), "value"))
+#endif
     {
       parmpy_object *self = (parmpy_object *) obj;
 
@@ -276,7 +280,11 @@ static int
 set_attr (PyObject *obj, PyObject *attr_name, PyObject *val)
 {
   if (PyString_Check (attr_name)
+#ifdef IS_PY3K
+      && ! PyUnicode_CompareWithASCIIString (attr_name, "value"))
+#else
       && ! strcmp (PyString_AsString (attr_name), "value"))
+#endif
     {
       if (!val)
 	{
@@ -331,6 +339,7 @@ call_doc_function (PyObject *obj, PyObject *method, PyObject *arg)
   if (gdbpy_is_string (result))
     {
       data = python_string_to_host_string (result);
+      Py_DECREF (result);
       if (! data)
 	return NULL;
     }
@@ -338,6 +347,7 @@ call_doc_function (PyObject *obj, PyObject *method, PyObject *arg)
     {
       PyErr_SetString (PyExc_RuntimeError,
 		       _("Parameter must return a string value."));
+      Py_DECREF (result);
       return NULL;
     }
 
@@ -646,7 +656,6 @@ parmpy_init (PyObject *self, PyObject *args, PyObject *kwds)
 {
   parmpy_object *obj = (parmpy_object *) self;
   const char *name;
-  char *copy;
   char *set_doc, *show_doc, *doc;
   char *cmd_name;
   int parmclass, cmdtype;
@@ -697,21 +706,16 @@ parmpy_init (PyObject *self, PyObject *args, PyObject *kwds)
   obj->type = (enum var_types) parmclass;
   memset (&obj->value, 0, sizeof (obj->value));
 
-  copy = xstrdup (name);
-  cmd_name = gdbpy_parse_command_name (copy, &set_list,
+  cmd_name = gdbpy_parse_command_name (name, &set_list,
 				       &setlist);
 
   if (! cmd_name)
-    {
-      xfree (copy);
-      return -1;
-    }
+    return -1;
   xfree (cmd_name);
-  cmd_name = gdbpy_parse_command_name (copy, &show_list,
+  cmd_name = gdbpy_parse_command_name (name, &show_list,
 				       &showlist);
   if (! cmd_name)
     return -1;
-  xfree (copy);
 
   set_doc = get_doc_string (self, set_doc_cst);
   show_doc = get_doc_string (self, show_doc_cst);
@@ -749,6 +753,7 @@ gdbpy_initialize_parameters (void)
 {
   int i;
 
+  parmpy_object_type.tp_new = PyType_GenericNew;
   if (PyType_Ready (&parmpy_object_type) < 0)
     return;
 
@@ -776,8 +781,7 @@ gdbpy_initialize_parameters (void)
 
 static PyTypeObject parmpy_object_type =
 {
-  PyObject_HEAD_INIT (NULL)
-  0,				  /*ob_size*/
+  PyVarObject_HEAD_INIT (NULL, 0)
   "gdb.Parameter",		  /*tp_name*/
   sizeof (parmpy_object),	  /*tp_basicsize*/
   0,				  /*tp_itemsize*/
@@ -814,5 +818,4 @@ static PyTypeObject parmpy_object_type =
   0,				  /* tp_dictoffset */
   parmpy_init,			  /* tp_init */
   0,				  /* tp_alloc */
-  PyType_GenericNew		  /* tp_new */
 };

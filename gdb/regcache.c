@@ -1,7 +1,6 @@
 /* Cache and manage the values of registers for GDB, the GNU debugger.
 
-   Copyright (C) 1986, 1987, 1989, 1991, 1994, 1995, 1996, 1998, 2000, 2001,
-   2002, 2004, 2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1986-2013 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -226,14 +225,14 @@ regcache_xmalloc_1 (struct gdbarch *gdbarch, struct address_space *aspace,
       regcache->registers
 	= XCALLOC (descr->sizeof_cooked_registers, gdb_byte);
       regcache->register_status
-	= XCALLOC (descr->sizeof_cooked_register_status, gdb_byte);
+	= XCALLOC (descr->sizeof_cooked_register_status, signed char);
     }
   else
     {
       regcache->registers
 	= XCALLOC (descr->sizeof_raw_registers, gdb_byte);
       regcache->register_status
-	= XCALLOC (descr->sizeof_raw_register_status, gdb_byte);
+	= XCALLOC (descr->sizeof_raw_register_status, signed char);
     }
   regcache->aspace = aspace;
   regcache->ptid = minus_one_ptid;
@@ -331,7 +330,7 @@ regcache_save (struct regcache *dst, regcache_cooked_read_ftype *cooked_read,
     }
 }
 
-void
+static void
 regcache_restore (struct regcache *dst,
 		  regcache_cooked_read_ftype *cooked_read,
 		  void *cooked_read_context)
@@ -351,9 +350,10 @@ regcache_restore (struct regcache *dst,
     {
       if (gdbarch_register_reggroup_p (gdbarch, regnum, restore_reggroup))
 	{
-	  int valid = cooked_read (cooked_read_context, regnum, buf);
+	  enum register_status status;
 
-	  if (valid)
+	  status = cooked_read (cooked_read_context, regnum, buf);
+	  if (status == REG_VALID)
 	    regcache_cooked_write (dst, regnum, buf);
 	}
     }
@@ -410,7 +410,7 @@ regcache_dup (struct regcache *src)
   return newbuf;
 }
 
-int
+enum register_status
 regcache_register_status (const struct regcache *regcache, int regnum)
 {
   gdb_assert (regcache != NULL);
@@ -450,16 +450,32 @@ struct regcache_list
 static struct regcache_list *current_regcache;
 
 struct regcache *
-get_thread_arch_regcache (ptid_t ptid, struct gdbarch *gdbarch)
+get_thread_arch_aspace_regcache (ptid_t ptid, struct gdbarch *gdbarch,
+				 struct address_space *aspace)
 {
   struct regcache_list *list;
   struct regcache *new_regcache;
-  struct address_space *aspace;
 
   for (list = current_regcache; list; list = list->next)
     if (ptid_equal (list->regcache->ptid, ptid)
 	&& get_regcache_arch (list->regcache) == gdbarch)
       return list->regcache;
+
+  new_regcache = regcache_xmalloc_1 (gdbarch, aspace, 0);
+  new_regcache->ptid = ptid;
+
+  list = xmalloc (sizeof (struct regcache_list));
+  list->regcache = new_regcache;
+  list->next = current_regcache;
+  current_regcache = list;
+
+  return new_regcache;
+}
+
+struct regcache *
+get_thread_arch_regcache (ptid_t ptid, struct gdbarch *gdbarch)
+{
+  struct address_space *aspace;
 
   /* For the benefit of "maint print registers" & co when debugging an
      executable, allow dumping the regcache even when there is no
@@ -471,15 +487,7 @@ get_thread_arch_regcache (ptid_t ptid, struct gdbarch *gdbarch)
 	    ? NULL
 	    : target_thread_address_space (ptid));
 
-  new_regcache = regcache_xmalloc_1 (gdbarch, aspace, 0);
-  new_regcache->ptid = ptid;
-
-  list = xmalloc (sizeof (struct regcache_list));
-  list->regcache = new_regcache;
-  list->next = current_regcache;
-  current_regcache = list;
-
-  return new_regcache;
+  return get_thread_arch_aspace_regcache  (ptid, gdbarch, aspace);
 }
 
 static ptid_t current_thread_ptid;
@@ -539,7 +547,6 @@ void
 registers_changed_ptid (ptid_t ptid)
 {
   struct regcache_list *list, **list_link;
-  int wildcard = ptid_equal (ptid, minus_one_ptid);
 
   list = current_regcache;
   list_link = &current_regcache;
@@ -560,13 +567,13 @@ registers_changed_ptid (ptid_t ptid)
       list = *list_link;
     }
 
-  if (wildcard || ptid_equal (ptid, current_thread_ptid))
+  if (ptid_match (current_thread_ptid, ptid))
     {
       current_thread_ptid = null_ptid;
       current_thread_arch = NULL;
     }
 
-  if (wildcard || ptid_equal (ptid, inferior_ptid))
+  if (ptid_match (inferior_ptid, ptid))
     {
       /* We just deleted the regcache of the current thread.  Need to
 	 forget about any frames we have cached, too.  */
@@ -699,8 +706,6 @@ regcache_cooked_read (struct regcache *regcache, int regnum, gdb_byte *buf)
     {
       /* Read-only register cache, perhaps the cooked value was
 	 cached?  */
-      struct gdbarch *gdbarch = regcache->descr->gdbarch;
-
       if (regcache->register_status[regnum] == REG_VALID)
 	memcpy (buf, register_buffer (regcache, regnum),
 		regcache->descr->sizeof_register[regnum]);
@@ -709,9 +714,64 @@ regcache_cooked_read (struct regcache *regcache, int regnum, gdb_byte *buf)
 
       return regcache->register_status[regnum];
     }
+  else if (gdbarch_pseudo_register_read_value_p (regcache->descr->gdbarch))
+    {
+      struct value *mark, *computed;
+      enum register_status result = REG_VALID;
+
+      mark = value_mark ();
+
+      computed = gdbarch_pseudo_register_read_value (regcache->descr->gdbarch,
+						     regcache, regnum);
+      if (value_entirely_available (computed))
+	memcpy (buf, value_contents_raw (computed),
+		regcache->descr->sizeof_register[regnum]);
+      else
+	{
+	  memset (buf, 0, regcache->descr->sizeof_register[regnum]);
+	  result = REG_UNAVAILABLE;
+	}
+
+      value_free_to_mark (mark);
+
+      return result;
+    }
   else
     return gdbarch_pseudo_register_read (regcache->descr->gdbarch, regcache,
 					 regnum, buf);
+}
+
+struct value *
+regcache_cooked_read_value (struct regcache *regcache, int regnum)
+{
+  gdb_assert (regnum >= 0);
+  gdb_assert (regnum < regcache->descr->nr_cooked_registers);
+
+  if (regnum < regcache->descr->nr_raw_registers
+      || (regcache->readonly_p
+	  && regcache->register_status[regnum] != REG_UNKNOWN)
+      || !gdbarch_pseudo_register_read_value_p (regcache->descr->gdbarch))
+    {
+      struct value *result;
+
+      result = allocate_value (register_type (regcache->descr->gdbarch,
+					      regnum));
+      VALUE_LVAL (result) = lval_register;
+      VALUE_REGNUM (result) = regnum;
+
+      /* It is more efficient in general to do this delegation in this
+	 direction than in the other one, even though the value-based
+	 API is preferred.  */
+      if (regcache_cooked_read (regcache, regnum,
+				value_contents_raw (result)) == REG_UNAVAILABLE)
+	mark_value_bytes_unavailable (result, 0,
+				      TYPE_LENGTH (value_type (result)));
+
+      return result;
+    }
+  else
+    return gdbarch_pseudo_register_read_value (regcache->descr->gdbarch,
+					       regcache, regnum);
 }
 
 enum register_status
@@ -1032,7 +1092,7 @@ reg_flush_command (char *command, int from_tty)
 
 static void
 dump_endian_bytes (struct ui_file *file, enum bfd_endian endian,
-		   const unsigned char *buf, long len)
+		   const gdb_byte *buf, long len)
 {
   int i;
 
@@ -1070,7 +1130,7 @@ regcache_dump (struct regcache *regcache, struct ui_file *file,
   int footnote_register_offset = 0;
   int footnote_register_type_name_null = 0;
   long register_offset = 0;
-  unsigned char buf[MAX_REGISTER_SIZE];
+  gdb_byte buf[MAX_REGISTER_SIZE];
 
 #if 0
   fprintf_unfiltered (file, "nr_raw_registers %d\n",

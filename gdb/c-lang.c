@@ -1,7 +1,6 @@
 /* C language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 1992, 1993, 1994, 1995, 1996, 1998, 1999, 2000, 2002, 2003,
-   2004, 2005, 2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1992-2013 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -87,7 +86,7 @@ classify_type (struct type *elttype, struct gdbarch *gdbarch,
      that would do the wrong thing.  */
   while (elttype)
     {
-      char *name = TYPE_NAME (elttype);
+      const char *name = TYPE_NAME (elttype);
 
       if (TYPE_CODE (elttype) == TYPE_CODE_CHAR || !name)
 	{
@@ -197,18 +196,6 @@ c_printstr (struct ui_file *stream, struct type *type,
   const char *type_encoding;
   const char *encoding;
 
-  enum bfd_endian byte_order = gdbarch_byte_order (get_type_arch (type));
-  unsigned int i;
-  unsigned int things_printed = 0;
-  int in_quotes = 0;
-  int need_comma = 0;
-  int width = TYPE_LENGTH (type);
-  struct obstack wchar_buf, output;
-  struct cleanup *cleanup;
-  struct wchar_iterator *iter;
-  int finished = 0;
-  int need_escape = 0;
-
   str_type = (classify_type (type, get_type_arch (type), &type_encoding)
 	      & ~C_CHAR);
   switch (str_type)
@@ -257,7 +244,6 @@ c_get_string (struct value *value, gdb_byte **buffer,
   int req_length = *length;
   enum bfd_endian byte_order
     = gdbarch_byte_order (get_type_arch (type));
-  enum c_string_type kind;
 
   if (element_type == NULL)
     goto error;
@@ -286,9 +272,7 @@ c_get_string (struct value *value, gdb_byte **buffer,
 
   if (! c_textual_element_type (element_type, 0))
     goto error;
-  kind = classify_type (element_type,
-			get_type_arch (element_type),
-			charset);
+  classify_type (element_type, get_type_arch (element_type), charset);
   width = TYPE_LENGTH (element_type);
 
   /* If the string lives in GDB's memory instead of the inferior's,
@@ -552,7 +536,7 @@ parse_one_string (struct obstack *output, char *data, int len,
       /* If we saw a run of characters, convert them all.  */
       if (p > data)
 	convert_between_encodings (host_charset (), dest_charset,
-				   data, p - data, 1,
+				   (gdb_byte *) data, p - data, 1,
 				   output, translit_none);
       /* If we saw an escape, convert it.  */
       if (p < limit)
@@ -748,6 +732,7 @@ const struct op_print c_op_print_tab[] =
   {"/", BINOP_DIV, PREC_MUL, 0},
   {"%", BINOP_REM, PREC_MUL, 0},
   {"@", BINOP_REPEAT, PREC_REPEAT, 0},
+  {"+", UNOP_PLUS, PREC_PREFIX, 0},
   {"-", UNOP_NEG, PREC_PREFIX, 0},
   {"!", UNOP_LOGICAL_NOT, PREC_PREFIX, 0},
   {"~", UNOP_COMPLEMENT, PREC_PREFIX, 0},
@@ -832,7 +817,6 @@ const struct language_defn c_language_defn =
   "c",				/* Language name */
   language_c,
   range_check_off,
-  type_check_off,
   case_sensitive_on,
   array_row_major,
   macro_expansion_c,
@@ -847,6 +831,7 @@ const struct language_defn c_language_defn =
   c_print_typedef,		/* Print a typedef using appropriate syntax */
   c_val_print,			/* Print a value using appropriate syntax */
   c_value_print,		/* Print a top-level value */
+  default_read_var_value,	/* la_read_var_value */
   NULL,				/* Language specific skip_trampoline */
   NULL,				/* name_of_this */
   basic_lookup_symbol_nonlocal,	/* lookup_symbol_nonlocal */
@@ -863,6 +848,8 @@ const struct language_defn c_language_defn =
   default_print_array_index,
   default_pass_by_reference,
   c_get_string,
+  NULL,				/* la_get_symbol_name_cmp */
+  iterate_over_symbols,
   LANG_MAGIC
 };
 
@@ -953,7 +940,6 @@ const struct language_defn cplus_language_defn =
   "c++",			/* Language name */
   language_cplus,
   range_check_off,
-  type_check_off,
   case_sensitive_on,
   array_row_major,
   macro_expansion_c,
@@ -968,6 +954,7 @@ const struct language_defn cplus_language_defn =
   c_print_typedef,		/* Print a typedef using appropriate syntax */
   c_val_print,			/* Print a value using appropriate syntax */
   c_value_print,		/* Print a top-level value */
+  default_read_var_value,	/* la_read_var_value */
   cplus_skip_trampoline,	/* Language specific skip_trampoline */
   "this",                       /* name_of_this */
   cp_lookup_symbol_nonlocal,	/* lookup_symbol_nonlocal */
@@ -984,6 +971,8 @@ const struct language_defn cplus_language_defn =
   default_print_array_index,
   cp_pass_by_reference,
   c_get_string,
+  NULL,				/* la_get_symbol_name_cmp */
+  iterate_over_symbols,
   LANG_MAGIC
 };
 
@@ -992,7 +981,6 @@ const struct language_defn asm_language_defn =
   "asm",			/* Language name */
   language_asm,
   range_check_off,
-  type_check_off,
   case_sensitive_on,
   array_row_major,
   macro_expansion_c,
@@ -1007,6 +995,7 @@ const struct language_defn asm_language_defn =
   c_print_typedef,		/* Print a typedef using appropriate syntax */
   c_val_print,			/* Print a value using appropriate syntax */
   c_value_print,		/* Print a top-level value */
+  default_read_var_value,	/* la_read_var_value */
   NULL,				/* Language specific skip_trampoline */
   NULL,				/* name_of_this */
   basic_lookup_symbol_nonlocal,	/* lookup_symbol_nonlocal */
@@ -1023,6 +1012,8 @@ const struct language_defn asm_language_defn =
   default_print_array_index,
   default_pass_by_reference,
   c_get_string,
+  NULL,				/* la_get_symbol_name_cmp */
+  iterate_over_symbols,
   LANG_MAGIC
 };
 
@@ -1036,7 +1027,6 @@ const struct language_defn minimal_language_defn =
   "minimal",			/* Language name */
   language_minimal,
   range_check_off,
-  type_check_off,
   case_sensitive_on,
   array_row_major,
   macro_expansion_c,
@@ -1051,6 +1041,7 @@ const struct language_defn minimal_language_defn =
   c_print_typedef,		/* Print a typedef using appropriate syntax */
   c_val_print,			/* Print a value using appropriate syntax */
   c_value_print,		/* Print a top-level value */
+  default_read_var_value,	/* la_read_var_value */
   NULL,				/* Language specific skip_trampoline */
   NULL,				/* name_of_this */
   basic_lookup_symbol_nonlocal,	/* lookup_symbol_nonlocal */
@@ -1067,6 +1058,8 @@ const struct language_defn minimal_language_defn =
   default_print_array_index,
   default_pass_by_reference,
   c_get_string,
+  NULL,				/* la_get_symbol_name_cmp */
+  iterate_over_symbols,
   LANG_MAGIC
 };
 

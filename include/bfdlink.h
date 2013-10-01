@@ -229,7 +229,7 @@ typedef enum {with_flags, without_flags} flag_type;
 /* A section flag list.  */
 struct flag_info_list
 {
-  flag_type with; 
+  flag_type with;
   const char *name;
   bfd_boolean valid;
   struct flag_info_list *next;
@@ -245,6 +245,7 @@ struct flag_info
 };
 
 struct bfd_elf_dynamic_list;
+struct bfd_elf_version_tree;
 
 /* This structure holds all the information needed to communicate
    between BFD and the linker when doing a link.  */
@@ -336,6 +337,9 @@ struct bfd_link_info
   /* TRUE if we should warn when adding a DT_TEXTREL to a shared object.  */
   unsigned int warn_shared_textrel: 1;
 
+  /* TRUE if we should error when adding a DT_TEXTREL.  */
+  unsigned int error_textrel: 1;
+
   /* TRUE if .hash section should be created.  */
   unsigned int emit_hash: 1;
 
@@ -401,6 +405,9 @@ struct bfd_link_info
   /* TRUE if we should warn alternate ELF machine code.  */
   unsigned int warn_alternate_em: 1;
 
+  /* TRUE if the linker script contained an explicit PHDRS command.  */
+  unsigned int user_phdrs: 1;
+
   /* Char that may appear as the first char of a symbol, but should be
      skipped (like symbol_leading_char) when looking up symbols in
      wrap_hash.  Used by PowerPC Linux for 'dot' symbols.  */
@@ -408,6 +415,28 @@ struct bfd_link_info
 
   /* Separator between archive and filename in linker script filespecs.  */
   char path_separator;
+
+  /* Default stack size.  Zero means default (often zero itself), -1
+     means explicitly zero-sized.  */
+  bfd_signed_vma stacksize;
+
+  /* Enable or disable target specific optimizations.
+
+     Not all targets have optimizations to enable.
+
+     Normally these optimizations are disabled by default but some targets
+     prefer to enable them by default.  So this field is a tri-state variable.
+     The values are:
+     
+     zero: Enable the optimizations (either from --relax being specified on
+       the command line or the backend's before_allocation emulation function.
+       
+     positive: The user has requested that these optimizations be disabled.
+       (Via the --no-relax command line option).
+
+     negative: The optimizations are disabled.  (Set when initializing the
+       args_type structure in ldmain.c:main.  */
+  signed int disable_target_specific_optimizations;
 
   /* Function callbacks.  */
   const struct bfd_link_callbacks *callbacks;
@@ -428,6 +457,10 @@ struct bfd_link_info
      option).  If this is NULL, no symbols are being wrapped.  */
   struct bfd_hash_table *wrap_hash;
 
+  /* Hash table of symbols which may be left unresolved during
+     a link.  If this is NULL, no symbols can be left unresolved.  */
+  struct bfd_hash_table *ignore_hash;
+
   /* The output BFD.  */
   bfd *output_bfd;
 
@@ -435,9 +468,6 @@ struct bfd_link_info
      together via the link_next field.  */
   bfd *input_bfds;
   bfd **input_bfds_tail;
-
-  /* Non-NULL if .note.gnu.build-id section should be created.  */
-  char *emit_note_gnu_build_id;
 
   /* If a symbol should be created for each input BFD, this is section
      where those symbols should be placed.  It must be a section in
@@ -496,6 +526,9 @@ struct bfd_link_info
 
   /* List of symbols should be dynamic.  */
   struct bfd_elf_dynamic_list *dynamic_list;
+
+  /* The version information.  */
+  struct bfd_elf_version_tree *version_info;
 };
 
 /* This structures holds a set of callback functions.  These are called
@@ -667,8 +700,8 @@ struct bfd_link_order
 	} indirect;
       struct
 	{
-	  /* Size of contents, or zero when contents size == size
-	     within output section.
+	  /* Size of contents, or zero when contents should be filled by
+	     the architecture-dependent fill function.
 	     A non-zero value allows filling of the output section
 	     with an arbitrary repeated pattern.  */
 	  unsigned int size;

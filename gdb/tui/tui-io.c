@@ -1,7 +1,6 @@
 /* TUI support I/O functions.
 
-   Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2007, 2008, 2009,
-   2010, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1998-2013 Free Software Foundation, Inc.
 
    Contributed by Hewlett-Packard Company.
 
@@ -212,8 +211,11 @@ tui_redisplay_readline (void)
 
   /* Detect when we temporarily left SingleKey and now the readline
      edit buffer is empty, automatically restore the SingleKey
-     mode.  */
-  if (tui_current_key_mode == TUI_ONE_COMMAND_MODE && rl_end == 0)
+     mode.  The restore must only be done if the command has finished.
+     The command could call prompt_for_continue and we must not
+     restore SingleKey so that the prompt and normal keymap are used.  */
+  if (tui_current_key_mode == TUI_ONE_COMMAND_MODE && rl_end == 0
+      && immediate_quit == 0)
     tui_set_key_mode (TUI_SINGLE_KEY_MODE);
 
   if (tui_current_key_mode == TUI_SINGLE_KEY_MODE)
@@ -417,7 +419,8 @@ tui_rl_display_match_list (char **matches, int len, int max)
     {
       char msg[256];
 
-      sprintf (msg, "\nDisplay all %d possibilities? (y or n)", len);
+      xsnprintf (msg, sizeof (msg),
+		 "\nDisplay all %d possibilities? (y or n)", len);
       tui_puts (msg);
       if (get_y_or_n () == 0)
 	{
@@ -530,7 +533,7 @@ tui_setup_io (int mode)
       /* Keep track of previous gdb output.  */
       tui_old_stdout = gdb_stdout;
       tui_old_stderr = gdb_stderr;
-      tui_old_uiout = uiout;
+      tui_old_uiout = current_uiout;
 
       /* Reconfigure gdb output.  */
       gdb_stdout = tui_stdout;
@@ -538,7 +541,7 @@ tui_setup_io (int mode)
       gdb_stdlog = gdb_stdout;	/* for moment */
       gdb_stdtarg = gdb_stderr;	/* for moment */
       gdb_stdtargerr = gdb_stderr;	/* for moment */
-      uiout = tui_out;
+      current_uiout = tui_out;
 
       /* Save tty for SIGCONT.  */
       savetty ();
@@ -551,7 +554,7 @@ tui_setup_io (int mode)
       gdb_stdlog = gdb_stdout;	/* for moment */
       gdb_stdtarg = gdb_stderr;	/* for moment */
       gdb_stdtargerr = gdb_stderr;	/* for moment */
-      uiout = tui_old_uiout;
+      current_uiout = tui_old_uiout;
 
       /* Restore readline.  */
       rl_redisplay_function = tui_old_rl_redisplay_function;
@@ -607,7 +610,7 @@ tui_initialize_io (void)
 
   /* Create the default UI.  It is not created because we installed a
      deprecated_init_ui_hook.  */
-  tui_old_uiout = uiout = cli_out_new (gdb_stdout);
+  tui_old_uiout = cli_out_new (gdb_stdout);
 
 #ifdef TUI_USE_PIPE_FOR_READLINE
   /* Temporary solution for readline writing to stdout: redirect

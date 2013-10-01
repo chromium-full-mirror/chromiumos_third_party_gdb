@@ -1,4 +1,4 @@
-# Copyright 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+# Copyright 2008-2013 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,11 +29,9 @@ if {[mi_gdb_start]} {
 #
 # Start here
 #
-set testfile "nsintrall"
-set srcfile "$testfile.c"
-set binfile "$objdir/$subdir/mi-$testfile"
+standard_testfile nsintrall.c
 
-set options [list debug incdir=$objdir]
+set options [list debug]
 if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
     return -1
 }
@@ -43,7 +41,7 @@ mi_gdb_load $binfile
 
 mi_gdb_test "-gdb-set non-stop 1" ".*"
 mi_gdb_test "-gdb-set target-async 1" ".*"
-detect_async
+mi_detect_async
 
 if { [mi_run_to_main] < 0 } {
     continue

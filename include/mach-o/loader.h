@@ -1,5 +1,5 @@
 /* Mach-O support for BFD.
-   Copyright 2011
+   Copyright 2011, 2012
    Free Software Foundation, Inc.
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -22,33 +22,7 @@
 #ifndef _MACH_O_LOADER_H
 #define _MACH_O_LOADER_H
 
-/* Symbol n_type values.  */
-#define BFD_MACH_O_N_STAB  0xe0	/* If any of these bits set, a symbolic debugging entry.  */
-#define BFD_MACH_O_N_PEXT  0x10	/* Private external symbol bit.  */
-#define BFD_MACH_O_N_TYPE  0x0e	/* Mask for the type bits.  */
-#define BFD_MACH_O_N_EXT   0x01	/* External symbol bit, set for external symbols.  */
-#define BFD_MACH_O_N_UNDF  0x00	/* Undefined, n_sect == NO_SECT.  */
-#define BFD_MACH_O_N_ABS   0x02	/* Absolute, n_sect == NO_SECT.  */
-#define BFD_MACH_O_N_INDR  0x0a	/* Indirect.  */
-#define BFD_MACH_O_N_PBUD  0x0c /* Prebound undefined (defined in a dylib).  */
-#define BFD_MACH_O_N_SECT  0x0e	/* Defined in section number n_sect.  */
-
-#define BFD_MACH_O_NO_SECT 0	/* Symbol not in any section of the image.  */
-
-/* Symbol n_desc reference flags.  */
-#define BFD_MACH_O_REFERENCE_MASK 				0x0f
-#define BFD_MACH_O_REFERENCE_FLAG_UNDEFINED_NON_LAZY		0x00
-#define BFD_MACH_O_REFERENCE_FLAG_UNDEFINED_LAZY		0x01
-#define BFD_MACH_O_REFERENCE_FLAG_DEFINED			0x02
-#define BFD_MACH_O_REFERENCE_FLAG_PRIVATE_DEFINED		0x03
-#define BFD_MACH_O_REFERENCE_FLAG_PRIVATE_UNDEFINED_NON_LAZY	0x04
-#define BFD_MACH_O_REFERENCE_FLAG_PRIVATE_UNDEFINED_LAZY	0x05
-
-#define BFD_MACH_O_REFERENCED_DYNAMICALLY			0x10
-#define BFD_MACH_O_N_DESC_DISCARDED				0x20
-#define BFD_MACH_O_N_NO_DEAD_STRIP				0x20
-#define BFD_MACH_O_N_WEAK_REF					0x40
-#define BFD_MACH_O_N_WEAK_DEF					0x80
+/* Constants for header. */
 
 typedef enum bfd_mach_o_mach_header_magic
 {
@@ -59,37 +33,89 @@ typedef enum bfd_mach_o_mach_header_magic
 }
 bfd_mach_o_mach_header_magic;
 
-typedef enum bfd_mach_o_ppc_thread_flavour
-{
-  BFD_MACH_O_PPC_THREAD_STATE      = 1,
-  BFD_MACH_O_PPC_FLOAT_STATE       = 2,
-  BFD_MACH_O_PPC_EXCEPTION_STATE   = 3,
-  BFD_MACH_O_PPC_VECTOR_STATE      = 4,
-  BFD_MACH_O_PPC_THREAD_STATE64    = 5,
-  BFD_MACH_O_PPC_EXCEPTION_STATE64 = 6,
-  BFD_MACH_O_PPC_THREAD_STATE_NONE = 7
-}
-bfd_mach_o_ppc_thread_flavour;
+#define BFD_MACH_O_CPU_IS64BIT 0x1000000
 
-/* Defined in <mach/i386/thread_status.h> */
-typedef enum bfd_mach_o_i386_thread_flavour
+typedef enum bfd_mach_o_cpu_type
 {
-  BFD_MACH_O_x86_THREAD_STATE32    = 1,
-  BFD_MACH_O_x86_FLOAT_STATE32     = 2,
-  BFD_MACH_O_x86_EXCEPTION_STATE32 = 3,
-  BFD_MACH_O_x86_THREAD_STATE64    = 4,
-  BFD_MACH_O_x86_FLOAT_STATE64     = 5,
-  BFD_MACH_O_x86_EXCEPTION_STATE64 = 6,
-  BFD_MACH_O_x86_THREAD_STATE      = 7,
-  BFD_MACH_O_x86_FLOAT_STATE       = 8,
-  BFD_MACH_O_x86_EXCEPTION_STATE   = 9,
-  BFD_MACH_O_x86_DEBUG_STATE32     = 10,
-  BFD_MACH_O_x86_DEBUG_STATE64     = 11,
-  BFD_MACH_O_x86_DEBUG_STATE       = 12,
-  BFD_MACH_O_x86_THREAD_STATE_NONE = 13
+  BFD_MACH_O_CPU_TYPE_VAX = 1,
+  BFD_MACH_O_CPU_TYPE_MC680x0 = 6,
+  BFD_MACH_O_CPU_TYPE_I386 = 7,
+  BFD_MACH_O_CPU_TYPE_MIPS = 8,
+  BFD_MACH_O_CPU_TYPE_MC98000 = 10,
+  BFD_MACH_O_CPU_TYPE_HPPA = 11,
+  BFD_MACH_O_CPU_TYPE_ARM = 12,
+  BFD_MACH_O_CPU_TYPE_MC88000 = 13,
+  BFD_MACH_O_CPU_TYPE_SPARC = 14,
+  BFD_MACH_O_CPU_TYPE_I860 = 15,
+  BFD_MACH_O_CPU_TYPE_ALPHA = 16,
+  BFD_MACH_O_CPU_TYPE_POWERPC = 18,
+  BFD_MACH_O_CPU_TYPE_POWERPC_64 = (BFD_MACH_O_CPU_TYPE_POWERPC | BFD_MACH_O_CPU_IS64BIT),
+  BFD_MACH_O_CPU_TYPE_X86_64 = (BFD_MACH_O_CPU_TYPE_I386 | BFD_MACH_O_CPU_IS64BIT)
 }
-bfd_mach_o_i386_thread_flavour;
+bfd_mach_o_cpu_type;
 
+typedef enum bfd_mach_o_cpu_subtype
+{
+  /* i386.  */
+  BFD_MACH_O_CPU_SUBTYPE_X86_ALL = 3,
+
+  /* arm.  */
+  BFD_MACH_O_CPU_SUBTYPE_ARM_ALL = 0,
+  BFD_MACH_O_CPU_SUBTYPE_ARM_V4T = 5,
+  BFD_MACH_O_CPU_SUBTYPE_ARM_V6 = 6,
+  BFD_MACH_O_CPU_SUBTYPE_ARM_V5TEJ = 7,
+  BFD_MACH_O_CPU_SUBTYPE_ARM_XSCALE = 8,
+  BFD_MACH_O_CPU_SUBTYPE_ARM_V7 = 9
+}
+bfd_mach_o_cpu_subtype;
+
+typedef enum bfd_mach_o_filetype
+{
+  BFD_MACH_O_MH_OBJECT      = 0x01,
+  BFD_MACH_O_MH_EXECUTE     = 0x02,
+  BFD_MACH_O_MH_FVMLIB      = 0x03,
+  BFD_MACH_O_MH_CORE        = 0x04,
+  BFD_MACH_O_MH_PRELOAD     = 0x05,
+  BFD_MACH_O_MH_DYLIB       = 0x06,
+  BFD_MACH_O_MH_DYLINKER    = 0x07,
+  BFD_MACH_O_MH_BUNDLE      = 0x08,
+  BFD_MACH_O_MH_DYLIB_STUB  = 0x09,
+  BFD_MACH_O_MH_DSYM        = 0x0a,
+  BFD_MACH_O_MH_KEXT_BUNDLE = 0x0b
+}
+bfd_mach_o_filetype;
+
+typedef enum bfd_mach_o_header_flags
+{
+  BFD_MACH_O_MH_NOUNDEFS		= 0x0000001,
+  BFD_MACH_O_MH_INCRLINK		= 0x0000002,
+  BFD_MACH_O_MH_DYLDLINK		= 0x0000004,
+  BFD_MACH_O_MH_BINDATLOAD		= 0x0000008,
+  BFD_MACH_O_MH_PREBOUND		= 0x0000010,
+  BFD_MACH_O_MH_SPLIT_SEGS		= 0x0000020,
+  BFD_MACH_O_MH_LAZY_INIT		= 0x0000040,
+  BFD_MACH_O_MH_TWOLEVEL		= 0x0000080,
+  BFD_MACH_O_MH_FORCE_FLAT		= 0x0000100,
+  BFD_MACH_O_MH_NOMULTIDEFS		= 0x0000200,
+  BFD_MACH_O_MH_NOFIXPREBINDING		= 0x0000400,
+  BFD_MACH_O_MH_PREBINDABLE		= 0x0000800,
+  BFD_MACH_O_MH_ALLMODSBOUND		= 0x0001000,
+  BFD_MACH_O_MH_SUBSECTIONS_VIA_SYMBOLS = 0x0002000,
+  BFD_MACH_O_MH_CANONICAL		= 0x0004000,
+  BFD_MACH_O_MH_WEAK_DEFINES		= 0x0008000,
+  BFD_MACH_O_MH_BINDS_TO_WEAK		= 0x0010000,
+  BFD_MACH_O_MH_ALLOW_STACK_EXECUTION	= 0x0020000,
+  BFD_MACH_O_MH_ROOT_SAFE		= 0x0040000,
+  BFD_MACH_O_MH_SETUID_SAFE		= 0x0080000,
+  BFD_MACH_O_MH_NO_REEXPORTED_DYLIBS	= 0x0100000,
+  BFD_MACH_O_MH_PIE			= 0x0200000,
+  BFD_MACH_O_MH_DEAD_STRIPPABLE_DYLIB   = 0x0400000,
+  BFD_MACH_O_MH_HAS_TLV_DESCRIPTORS     = 0x0800000,
+  BFD_MACH_O_MH_NO_HEAP_EXECUTION       = 0x1000000
+}
+bfd_mach_o_header_flags;
+
+/* Load command constants.  */
 #define BFD_MACH_O_LC_REQ_DYLD 0x80000000
 
 typedef enum bfd_mach_o_load_command_type
@@ -120,9 +146,9 @@ typedef enum bfd_mach_o_load_command_type
   /* Load a dynamically linked shared library that is allowed to be
        missing (weak).  */
   BFD_MACH_O_LC_LOAD_WEAK_DYLIB = 0x18,
-  BFD_MACH_O_LC_SEGMENT_64 = 0x19,	/* 64-bit segment of this file to be 
+  BFD_MACH_O_LC_SEGMENT_64 = 0x19,	/* 64-bit segment of this file to be
                                            mapped.  */
-  BFD_MACH_O_LC_ROUTINES_64 = 0x1a,     /* Address of the dyld init routine 
+  BFD_MACH_O_LC_ROUTINES_64 = 0x1a,     /* Address of the dyld init routine
                                            in a dylib.  */
   BFD_MACH_O_LC_UUID = 0x1b,            /* 128-bit UUID of the executable.  */
   BFD_MACH_O_LC_RPATH = 0x1c,		/* Run path addiions.  */
@@ -131,80 +157,20 @@ typedef enum bfd_mach_o_load_command_type
   BFD_MACH_O_LC_REEXPORT_DYLIB = 0x1f,  /* Load and re-export lib.  */
   BFD_MACH_O_LC_LAZY_LOAD_DYLIB = 0x20, /* Delay load of lib until use.  */
   BFD_MACH_O_LC_ENCRYPTION_INFO = 0x21, /* Encrypted segment info.  */
-  BFD_MACH_O_LC_DYLD_INFO = 0x22	/* Compressed dyld information.  */
+  BFD_MACH_O_LC_DYLD_INFO = 0x22,	/* Compressed dyld information.  */
+  BFD_MACH_O_LC_LOAD_UPWARD_DYLIB = 0x23, /* Load upward dylib.  */
+  BFD_MACH_O_LC_VERSION_MIN_MACOSX = 0x24,   /* Minimal MacOSX version.  */
+  BFD_MACH_O_LC_VERSION_MIN_IPHONEOS = 0x25, /* Minimal IOS version.  */
+  BFD_MACH_O_LC_FUNCTION_STARTS = 0x26,  /* Compressed table of func start.  */
+  BFD_MACH_O_LC_DYLD_ENVIRONMENT = 0x27, /* Env variable string for dyld.  */
+  BFD_MACH_O_LC_MAIN = 0x28,             /* Entry point.  */
+  BFD_MACH_O_LC_DATA_IN_CODE = 0x29,     /* Table of non-instructions.  */
+  BFD_MACH_O_LC_SOURCE_VERSION = 0x2a,   /* Source version.  */
+  BFD_MACH_O_LC_DYLIB_CODE_SIGN_DRS = 0x2b /* DRs from dylibs.  */
 }
 bfd_mach_o_load_command_type;
-
-#define BFD_MACH_O_CPU_IS64BIT 0x1000000
-
-typedef enum bfd_mach_o_cpu_type
-{
-  BFD_MACH_O_CPU_TYPE_VAX = 1,
-  BFD_MACH_O_CPU_TYPE_MC680x0 = 6,
-  BFD_MACH_O_CPU_TYPE_I386 = 7,
-  BFD_MACH_O_CPU_TYPE_MIPS = 8,
-  BFD_MACH_O_CPU_TYPE_MC98000 = 10,
-  BFD_MACH_O_CPU_TYPE_HPPA = 11,
-  BFD_MACH_O_CPU_TYPE_ARM = 12,
-  BFD_MACH_O_CPU_TYPE_MC88000 = 13,
-  BFD_MACH_O_CPU_TYPE_SPARC = 14,
-  BFD_MACH_O_CPU_TYPE_I860 = 15,
-  BFD_MACH_O_CPU_TYPE_ALPHA = 16,
-  BFD_MACH_O_CPU_TYPE_POWERPC = 18,
-  BFD_MACH_O_CPU_TYPE_POWERPC_64 = (BFD_MACH_O_CPU_TYPE_POWERPC | BFD_MACH_O_CPU_IS64BIT),
-  BFD_MACH_O_CPU_TYPE_X86_64 = (BFD_MACH_O_CPU_TYPE_I386 | BFD_MACH_O_CPU_IS64BIT)
-}
-bfd_mach_o_cpu_type;
-
-typedef enum bfd_mach_o_cpu_subtype
-{
-  BFD_MACH_O_CPU_SUBTYPE_X86_ALL = 3
-}
-bfd_mach_o_cpu_subtype;
-
-typedef enum bfd_mach_o_filetype
-{
-  BFD_MACH_O_MH_OBJECT      = 0x01,
-  BFD_MACH_O_MH_EXECUTE     = 0x02,
-  BFD_MACH_O_MH_FVMLIB      = 0x03,
-  BFD_MACH_O_MH_CORE        = 0x04,
-  BFD_MACH_O_MH_PRELOAD     = 0x05,
-  BFD_MACH_O_MH_DYLIB       = 0x06,
-  BFD_MACH_O_MH_DYLINKER    = 0x07,
-  BFD_MACH_O_MH_BUNDLE      = 0x08,
-  BFD_MACH_O_MH_DYLIB_STUB  = 0x09,
-  BFD_MACH_O_MH_DSYM        = 0x0a,
-  BFD_MACH_O_MH_KEXT_BUNDLE = 0x0b
-}
-bfd_mach_o_filetype;
-
-typedef enum bfd_mach_o_header_flags
-{
-  BFD_MACH_O_MH_NOUNDEFS		= 0x000001,
-  BFD_MACH_O_MH_INCRLINK		= 0x000002,
-  BFD_MACH_O_MH_DYLDLINK		= 0x000004,
-  BFD_MACH_O_MH_BINDATLOAD		= 0x000008,
-  BFD_MACH_O_MH_PREBOUND		= 0x000010,
-  BFD_MACH_O_MH_SPLIT_SEGS		= 0x000020,
-  BFD_MACH_O_MH_LAZY_INIT		= 0x000040,
-  BFD_MACH_O_MH_TWOLEVEL		= 0x000080,
-  BFD_MACH_O_MH_FORCE_FLAT		= 0x000100,
-  BFD_MACH_O_MH_NOMULTIDEFS		= 0x000200,
-  BFD_MACH_O_MH_NOFIXPREBINDING		= 0x000400,
-  BFD_MACH_O_MH_PREBINDABLE		= 0x000800,
-  BFD_MACH_O_MH_ALLMODSBOUND		= 0x001000,
-  BFD_MACH_O_MH_SUBSECTIONS_VIA_SYMBOLS = 0x002000,
-  BFD_MACH_O_MH_CANONICAL		= 0x004000,
-  BFD_MACH_O_MH_WEAK_DEFINES		= 0x008000,
-  BFD_MACH_O_MH_BINDS_TO_WEAK		= 0x010000,
-  BFD_MACH_O_MH_ALLOW_STACK_EXECUTION	= 0x020000,
-  BFD_MACH_O_MH_ROOT_SAFE		= 0x040000,
-  BFD_MACH_O_MH_SETUID_SAFE		= 0x080000,
-  BFD_MACH_O_MH_NO_REEXPORTED_DYLIBS	= 0x100000,
-  BFD_MACH_O_MH_PIE			= 0x200000
-}
-bfd_mach_o_header_flags;
-
+
+/* Section constants.  */
 /* Constants for the type of a section.  */
 
 typedef enum bfd_mach_o_section_type
@@ -288,15 +254,18 @@ bfd_mach_o_section_type;
 #define BFD_MACH_O_SECTION_ATTRIBUTES_MASK  0xffffff00
 /* System setable attributes.  */
 #define BFD_MACH_O_SECTION_ATTRIBUTES_SYS   0x00ffff00
-/* User attributes.  */   
+/* User attributes.  */
 #define BFD_MACH_O_SECTION_ATTRIBUTES_USR   0xff000000
 
 typedef enum bfd_mach_o_section_attribute
 {
+  /* Section has no specified attibutes.  */
+  BFD_MACH_O_S_ATTR_NONE              = 0,
+
   /* Section has local relocation entries.  */
   BFD_MACH_O_S_ATTR_LOC_RELOC         = 0x00000100,
 
-  /* Section has external relocation entries.  */  
+  /* Section has external relocation entries.  */
   BFD_MACH_O_S_ATTR_EXT_RELOC         = 0x00000200,
 
   /* Section contains some machine instructions.  */
@@ -307,7 +276,7 @@ typedef enum bfd_mach_o_section_attribute
 
   /* Used with i386 stubs.  */
   BFD_MACH_O_S_SELF_MODIFYING_CODE    = 0x04000000,
-  
+
   /* Blocks are live if they reference live blocks.  */
   BFD_MACH_O_S_ATTR_LIVE_SUPPORT      = 0x08000000,
 
@@ -325,5 +294,85 @@ typedef enum bfd_mach_o_section_attribute
   BFD_MACH_O_S_ATTR_PURE_INSTRUCTIONS = 0x80000000
 }
 bfd_mach_o_section_attribute;
+
+/* Symbol constants.  */
+
+/* Symbol n_type values.  */
+#define BFD_MACH_O_N_STAB  0xe0	/* If any of these bits set, a symbolic debugging entry.  */
+#define BFD_MACH_O_N_PEXT  0x10	/* Private external symbol bit.  */
+#define BFD_MACH_O_N_TYPE  0x0e	/* Mask for the type bits.  */
+#define BFD_MACH_O_N_EXT   0x01	/* External symbol bit, set for external symbols.  */
+#define BFD_MACH_O_N_UNDF  0x00	/* Undefined, n_sect == NO_SECT.  */
+#define BFD_MACH_O_N_ABS   0x02	/* Absolute, n_sect == NO_SECT.  */
+#define BFD_MACH_O_N_INDR  0x0a	/* Indirect.  */
+#define BFD_MACH_O_N_PBUD  0x0c /* Prebound undefined (defined in a dylib).  */
+#define BFD_MACH_O_N_SECT  0x0e	/* Defined in section number n_sect.  */
+
+#define BFD_MACH_O_NO_SECT 0	/* Symbol not in any section of the image.  */
+
+/* Symbol n_desc reference flags.  */
+#define BFD_MACH_O_REFERENCE_MASK 				0x07
+#define BFD_MACH_O_REFERENCE_FLAG_UNDEFINED_NON_LAZY		0x00
+#define BFD_MACH_O_REFERENCE_FLAG_UNDEFINED_LAZY		0x01
+#define BFD_MACH_O_REFERENCE_FLAG_DEFINED			0x02
+#define BFD_MACH_O_REFERENCE_FLAG_PRIVATE_DEFINED		0x03
+#define BFD_MACH_O_REFERENCE_FLAG_PRIVATE_UNDEFINED_NON_LAZY	0x04
+#define BFD_MACH_O_REFERENCE_FLAG_PRIVATE_UNDEFINED_LAZY	0x05
+
+#define BFD_MACH_O_REFERENCED_DYNAMICALLY			0x10
+#define BFD_MACH_O_N_DESC_DISCARDED				0x20
+#define BFD_MACH_O_N_NO_DEAD_STRIP				0x20
+#define BFD_MACH_O_N_WEAK_REF					0x40
+#define BFD_MACH_O_N_WEAK_DEF					0x80
+#define BFD_MACH_O_N_REF_TO_WEAK				0x80
+
+#define BFD_MACH_O_N_ARM_THUMB_DEF				0x08
+#define BFD_MACH_O_N_SYMBOL_RESOLVER				0x100
+
+#define BFD_MACH_O_INDIRECT_SYM_LOCAL			0x80000000
+#define BFD_MACH_O_INDIRECT_SYM_ABS			0x40000000
+
+/* Constants for DATA_IN_CODE entries.  */
+typedef enum bfd_mach_o_data_in_code_entry_kind
+{
+  BFD_MACH_O_DICE_KIND_DATA         = 0x0001, /* Data */
+  BFD_MACH_O_DICE_JUMP_TABLES8      = 0x0002, /* 1 byte jump tables.  */
+  BFD_MACH_O_DICE_JUMP_TABLES16     = 0x0003, /* 2 bytes.  */
+  BFD_MACH_O_DICE_JUMP_TABLES32     = 0x0004, /* 4 bytes.  */
+  BFD_MACH_O_DICE_ABS_JUMP_TABLES32 = 0x0005  /* Absolute jump table.  */
+} bfd_mach_o_data_in_code_entry_kind;
+
+/* Thread constants.  */
+
+typedef enum bfd_mach_o_ppc_thread_flavour
+{
+  BFD_MACH_O_PPC_THREAD_STATE      = 1,
+  BFD_MACH_O_PPC_FLOAT_STATE       = 2,
+  BFD_MACH_O_PPC_EXCEPTION_STATE   = 3,
+  BFD_MACH_O_PPC_VECTOR_STATE      = 4,
+  BFD_MACH_O_PPC_THREAD_STATE64    = 5,
+  BFD_MACH_O_PPC_EXCEPTION_STATE64 = 6,
+  BFD_MACH_O_PPC_THREAD_STATE_NONE = 7
+}
+bfd_mach_o_ppc_thread_flavour;
+
+/* Defined in <mach/i386/thread_status.h> */
+typedef enum bfd_mach_o_i386_thread_flavour
+{
+  BFD_MACH_O_x86_THREAD_STATE32    = 1,
+  BFD_MACH_O_x86_FLOAT_STATE32     = 2,
+  BFD_MACH_O_x86_EXCEPTION_STATE32 = 3,
+  BFD_MACH_O_x86_THREAD_STATE64    = 4,
+  BFD_MACH_O_x86_FLOAT_STATE64     = 5,
+  BFD_MACH_O_x86_EXCEPTION_STATE64 = 6,
+  BFD_MACH_O_x86_THREAD_STATE      = 7,
+  BFD_MACH_O_x86_FLOAT_STATE       = 8,
+  BFD_MACH_O_x86_EXCEPTION_STATE   = 9,
+  BFD_MACH_O_x86_DEBUG_STATE32     = 10,
+  BFD_MACH_O_x86_DEBUG_STATE64     = 11,
+  BFD_MACH_O_x86_DEBUG_STATE       = 12,
+  BFD_MACH_O_x86_THREAD_STATE_NONE = 13
+}
+bfd_mach_o_i386_thread_flavour;
 
 #endif /* _MACH_O_LOADER_H */

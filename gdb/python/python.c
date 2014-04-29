@@ -33,7 +33,10 @@
 #include "readline/tilde.h"
 #include "python.h"
 #include "cli/cli-utils.h"
+#include "gdb_wait.h"
 
+#include <unistd.h>
+#include <sys/types.h>
 #include <ctype.h>
 
 /* Declared constants and enum for python stack printing.  */
@@ -1489,6 +1492,40 @@ finalize_python (void *ignore)
 /* Provide a prototype to silence -Wmissing-prototypes.  */
 extern initialize_file_ftype _initialize_python;
 
+#ifdef HAVE_PYTHON
+/* Check whether python is available at runtime. */
+
+int
+python_available(void)
+{
+  static python_status = -1;
+  int child_status = 0;
+
+  if (python_status != -1)
+    return python_status;
+
+  pid_t pid = fork ();
+
+  if (pid < 0)
+    perror_with_name (("fork"));
+
+  if (pid == 0)
+    {
+      freopen ("/dev/null", "w", stderr);
+      Py_Initialize ();
+      _exit(0);
+    }
+
+  wait (&child_status);
+  if (WIFEXITED (child_status) && WEXITSTATUS (child_status) == 0)
+    python_status = 1;
+  else
+    python_status = 0;
+
+  return python_status;
+}
+#endif
+
 void
 _initialize_python (void)
 {
@@ -1611,6 +1648,9 @@ message == an error message without a stack will be printed."),
   Py_SetProgramName (progname);
 #endif
 #endif
+
+  if (!python_available ())
+    return;
 
   Py_Initialize ();
   PyEval_InitThreads ();

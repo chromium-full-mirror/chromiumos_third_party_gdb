@@ -1821,7 +1821,7 @@ mi_cmd_list_features (char *command, char **argv, int argc)
       ui_out_field_string (uiout, NULL, "exec-run-start-option");
 
 #if HAVE_PYTHON
-      if (gdb_python_initialized)
+      if (python_available () && gdb_python_initialized)
 	ui_out_field_string (uiout, NULL, "python");
 #endif
 

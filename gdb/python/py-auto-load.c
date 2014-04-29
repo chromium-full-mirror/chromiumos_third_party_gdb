@@ -50,6 +50,8 @@ show_auto_load_python_scripts (struct ui_file *file, int from_tty,
 static int
 auto_load_python_scripts_enabled (void)
 {
+  if (!python_available ())
+    return 0;
   return auto_load_python_scripts;
 }
 

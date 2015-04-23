@@ -613,7 +613,9 @@ extern int pwait (int, int *, int);
 /* Like sprintf but provides a pointer to malloc'd storage, which must
    be freed by the caller.  */
 
+#ifndef asprintf
 extern int asprintf (char **, const char *, ...) ATTRIBUTE_PRINTF_2;
+#endif
 #endif
 
 #if !HAVE_DECL_VASPRINTF
